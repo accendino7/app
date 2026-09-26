@@ -146,7 +146,7 @@ export default function AdminView({ notifications, refreshNotifications }) {
       <div className="fade-up flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <p className="text-[11px] uppercase tracking-[0.25em] text-[#F59E0B] font-semibold">Dashboard Admin</p>
-          <h1 className="font-display text-3xl sm:text-4xl font-black tracking-tight mt-1">Gestisci le sfide</h1>
+          <h1 className="font-display text-3xl sm:text-4xl font-black tracking-tight mt-1">Gestisci Coupon</h1>
           <p className="text-[#94A3B8] mt-1 text-sm">Crea sfide, genera coupon a tempo e assegna i vincitori.</p>
         </div>
         <div className="flex gap-2">
