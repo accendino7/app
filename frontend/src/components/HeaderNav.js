@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Bell, ShieldCheck, Store, Ticket, Flame } from "lucide-react";
+import { Bell, ShieldCheck, Store, Ticket, Flame, LogOut } from "lucide-react";
 import NotificationFeed from "@/components/NotificationFeed";
+import { useAuth } from "@/context/AuthContext";
 
 const ROLES = [
   { id: "admin", label: "Admin", icon: ShieldCheck, testid: "role-toggle-admin" },
@@ -8,8 +9,10 @@ const ROLES = [
   { id: "cliente", label: "Vincitore", icon: Ticket, testid: "role-toggle-client" },
 ];
 
-export default function HeaderNav({ role, setRole, notifications, refreshNotifications }) {
+export default function HeaderNav({ role, setRole, user, notifications, refreshNotifications }) {
   const [feedOpen, setFeedOpen] = useState(false);
+  const { signOut } = useAuth();
+  const isAdmin = user?.role === "admin";
   const unread = notifications.filter((n) => !n.read).length;
 
   return (
@@ -47,18 +50,32 @@ export default function HeaderNav({ role, setRole, notifications, refreshNotific
           })}
         </nav>
 
-        <button
-          data-testid="notifications-trigger-btn"
-          onClick={() => setFeedOpen(true)}
-          className="relative w-10 h-10 rounded-full bg-black/40 border border-white/10 flex items-center justify-center hover:border-[#F59E0B]/40 transition-colors shrink-0"
-        >
-          <Bell className="w-5 h-5 text-[#F8FAFC]" />
-          {unread > 0 && (
-            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#EF4444] text-white text-[10px] font-bold flex items-center justify-center pulse-glow">
-              {unread}
-            </span>
+        <div className="flex items-center gap-2 shrink-0">
+          {isAdmin && (
+            <button
+              data-testid="notifications-trigger-btn"
+              onClick={() => setFeedOpen(true)}
+              className="relative w-10 h-10 rounded-full bg-black/40 border border-white/10 flex items-center justify-center hover:border-[#F59E0B]/40 transition-colors"
+            >
+              <Bell className="w-5 h-5 text-[#F8FAFC]" />
+              {unread > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#EF4444] text-white text-[10px] font-bold flex items-center justify-center pulse-glow">
+                  {unread}
+                </span>
+              )}
+            </button>
           )}
-        </button>
+          {user && (
+            <button
+              data-testid="header-logout-btn"
+              onClick={signOut}
+              title="Esci"
+              className="w-10 h-10 rounded-full bg-black/40 border border-white/10 flex items-center justify-center hover:border-[#EF4444]/40 text-[#94A3B8] hover:text-white transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <NotificationFeed

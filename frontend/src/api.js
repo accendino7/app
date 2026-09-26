@@ -6,10 +6,10 @@ export const API = `${BACKEND_URL}/api`;
 const client = axios.create({ baseURL: API });
 
 export const setToken = (t) => {
-  if (t) localStorage.setItem("neg_token", t);
-  else localStorage.removeItem("neg_token");
+  if (t) localStorage.setItem("sfida_token", t);
+  else localStorage.removeItem("sfida_token");
 };
-export const getToken = () => localStorage.getItem("neg_token");
+export const getToken = () => localStorage.getItem("sfida_token");
 
 client.interceptors.request.use((config) => {
   const t = getToken();

@@ -5,6 +5,9 @@ import logging
 import random
 import string
 import asyncio
+import io
+import secrets
+import qrcode
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
@@ -16,7 +19,7 @@ import httpx
 import bcrypt
 import jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, WebSocket, WebSocketDisconnect, Response
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
@@ -47,6 +50,9 @@ APP_BASE_URL = os.environ.get("APP_BASE_URL", "").rstrip("/")
 # Auth (JWT, Bearer header) -------------------------------------------------
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = "HS256"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+WEBHOOK_CRON_SECRET = os.environ.get("WEBHOOK_CRON_SECRET", "")
 
 
 def hash_password(password: str) -> str:
@@ -57,31 +63,78 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 
-def create_access_token(neg_id: str, email: str) -> str:
+def create_access_token(user_id: str, email: str, role: str) -> str:
     payload = {
-        "sub": neg_id,
+        "sub": user_id,
         "email": email,
+        "role": role,
         "type": "access",
         "exp": datetime.now(timezone.utc) + timedelta(days=7),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-async def get_current_negoziante(request: Request) -> dict:
-    auth = request.headers.get("Authorization", "")
-    token = auth[7:] if auth.startswith("Bearer ") else None
+def _decode_token(token) -> dict:
     if not token:
         raise HTTPException(status_code=401, detail="Non autenticato")
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Sessione scaduta")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token non valido")
-    neg = await db.negozianti.find_one({"id": payload.get("sub")}, {"_id": 0, "password_hash": 0})
-    if not neg:
+
+
+def _token_from_request(request: Request):
+    auth = request.headers.get("Authorization", "")
+    return auth[7:] if auth.startswith("Bearer ") else None
+
+
+async def get_current_user(request: Request) -> dict:
+    payload = _decode_token(_token_from_request(request))
+    role = payload.get("role")
+    coll = db.admins if role == "admin" else db.negozianti
+    user = await coll.find_one({"id": payload.get("sub")}, {"_id": 0, "password_hash": 0})
+    if not user:
         raise HTTPException(status_code=401, detail="Account non trovato")
-    return neg
+    user["role"] = role
+    return user
+
+
+async def get_current_admin(request: Request) -> dict:
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accesso riservato all'admin")
+    return user
+
+
+async def get_current_negoziante(request: Request) -> dict:
+    user = await get_current_user(request)
+    if user.get("role") != "negoziante":
+        raise HTTPException(status_code=403, detail="Accesso riservato ai negozianti")
+    return user
+
+
+class WSManager:
+    def __init__(self):
+        self.active = set()
+
+    async def connect(self, ws):
+        await ws.accept()
+        self.active.add(ws)
+
+    def disconnect(self, ws):
+        self.active.discard(ws)
+
+    async def broadcast(self, msg: dict):
+        for ws in list(self.active):
+            try:
+                await ws.send_json(msg)
+            except Exception:
+                self.disconnect(ws)
+
+
+ws_manager = WSManager()
 
 _SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
 _CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
@@ -259,7 +312,7 @@ async def list_sfide():
 
 
 @api_router.post("/sfide")
-async def create_sfida(payload: SfidaCreate):
+async def create_sfida(payload: SfidaCreate, _admin: dict = Depends(get_current_admin)):
     sfida = Sfida(**payload.model_dump())
     await db.sfide.insert_one(sfida.model_dump())
     return sfida.model_dump()
@@ -280,8 +333,16 @@ async def get_coupon(code: str):
     return serialize_coupon(coupon)
 
 
+@api_router.get("/coupons/{code}/qr.png")
+async def coupon_qr(code: str):
+    img = qrcode.make(code)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")
+
+
 @api_router.post("/coupons")
-async def create_coupon(payload: CouponCreate):
+async def create_coupon(payload: CouponCreate, _admin: dict = Depends(get_current_admin)):
     sfida = await db.sfide.find_one({"id": payload.sfida_id}, {"_id": 0})
     if not sfida:
         raise HTTPException(status_code=404, detail="Sfida non trovata")
@@ -348,6 +409,7 @@ async def _do_redeem(coupon: dict, code: str) -> dict:
         "read": False,
     }
     await db.notifications.insert_one(dict(notif))
+    asyncio.create_task(ws_manager.broadcast({"type": "redeem", "notification": {k: v for k, v in notif.items()}}))
 
     settings = await db.settings.find_one({"_id": "app"})
     admin_email = (settings or {}).get("notification_email") or DEFAULT_ADMIN_EMAIL
@@ -380,6 +442,8 @@ def _winner_email_html(coupon: dict) -> str:
         f'<strong>{escape(coupon["premio"])}</strong> presso <strong>{escape(coupon["locale"])}</strong>.</p>'
         f'<p>Il tuo codice coupon e <strong>{escape(coupon["code"])}</strong>. '
         f'Scade il <strong>{escape(coupon["expires_at"])}</strong>.</p>'
+        f'<p style="text-align:center;margin:16px 0"><img src="{APP_BASE_URL}/api/coupons/{escape(coupon["code"])}/qr.png" '
+        'alt="QR coupon" width="180" height="180" style="background:#fff;padding:10px;border-radius:12px" /></p>'
         f'<p style="margin:20px 0"><a href="{link}" style="display:inline-block;background:#F59E0B;'
         'color:#000;padding:12px 22px;border-radius:10px;text-decoration:none;font-weight:bold">'
         'Apri la tua tessera con QR e countdown</a></p>'
@@ -401,25 +465,25 @@ async def _notify_winner_email(to: str, coupon: dict) -> None:
 
 
 @api_router.get("/notifications")
-async def list_notifications():
+async def list_notifications(_admin: dict = Depends(get_current_admin)):
     items = await db.notifications.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return items
 
 
 @api_router.post("/notifications/{notif_id}/read")
-async def mark_read(notif_id: str):
+async def mark_read(notif_id: str, _admin: dict = Depends(get_current_admin)):
     await db.notifications.update_one({"id": notif_id}, {"$set": {"read": True}})
     return {"ok": True}
 
 
 @api_router.post("/notifications/read-all")
-async def mark_all_read():
+async def mark_all_read(_admin: dict = Depends(get_current_admin)):
     await db.notifications.update_many({"read": False}, {"$set": {"read": True}})
     return {"ok": True}
 
 
 @api_router.get("/settings")
-async def get_settings():
+async def get_settings(_admin: dict = Depends(get_current_admin)):
     settings = await db.settings.find_one({"_id": "app"}, {"_id": 0})
     if not settings:
         settings = {"notification_email": DEFAULT_ADMIN_EMAIL}
@@ -427,7 +491,7 @@ async def get_settings():
 
 
 @api_router.put("/settings")
-async def update_settings(payload: SettingsUpdate):
+async def update_settings(payload: SettingsUpdate, _admin: dict = Depends(get_current_admin)):
     await db.settings.update_one(
         {"_id": "app"}, {"$set": {"notification_email": payload.notification_email}}, upsert=True
     )
@@ -435,7 +499,7 @@ async def update_settings(payload: SettingsUpdate):
 
 
 @api_router.get("/stats")
-async def stats():
+async def stats(_admin: dict = Depends(get_current_admin)):
     coupons = await db.coupons.find({}, {"_id": 0}).to_list(5000)
     attivi = sum(1 for c in coupons if compute_status(c) == "attivo")
     riscattati = sum(1 for c in coupons if compute_status(c) == "riscattato")
@@ -461,12 +525,12 @@ class LoginRequest(BaseModel):
 
 
 @api_router.get("/negozianti")
-async def list_negozianti():
+async def list_negozianti(_admin: dict = Depends(get_current_admin)):
     return await db.negozianti.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(1000)
 
 
 @api_router.post("/negozianti")
-async def create_negoziante(payload: NegozianteCreate):
+async def create_negoziante(payload: NegozianteCreate, _admin: dict = Depends(get_current_admin)):
     email = payload.email.strip().lower()
     if await db.negozianti.find_one({"email": email}):
         raise HTTPException(status_code=409, detail="Email gia registrata")
@@ -483,7 +547,7 @@ async def create_negoziante(payload: NegozianteCreate):
 
 
 @api_router.delete("/negozianti/{neg_id}")
-async def delete_negoziante(neg_id: str):
+async def delete_negoziante(neg_id: str, _admin: dict = Depends(get_current_admin)):
     res = await db.negozianti.delete_one({"id": neg_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Account non trovato")
@@ -493,19 +557,20 @@ async def delete_negoziante(neg_id: str):
 @api_router.post("/auth/login")
 async def login(payload: LoginRequest):
     email = payload.email.strip().lower()
+    admin = await db.admins.find_one({"email": email})
+    if admin and verify_password(payload.password, admin["password_hash"]):
+        token = create_access_token(admin["id"], email, "admin")
+        return {"token": token, "user": {"id": admin["id"], "name": admin["name"], "email": admin["email"], "role": "admin"}}
     neg = await db.negozianti.find_one({"email": email})
-    if not neg or not verify_password(payload.password, neg["password_hash"]):
-        raise HTTPException(status_code=401, detail="Email o password non validi")
-    token = create_access_token(neg["id"], email)
-    return {
-        "token": token,
-        "negoziante": {"id": neg["id"], "name": neg["name"], "email": neg["email"], "locale": neg["locale"]},
-    }
+    if neg and verify_password(payload.password, neg["password_hash"]):
+        token = create_access_token(neg["id"], email, "negoziante")
+        return {"token": token, "user": {"id": neg["id"], "name": neg["name"], "email": neg["email"], "locale": neg["locale"], "role": "negoziante"}}
+    raise HTTPException(status_code=401, detail="Email o password non validi")
 
 
 @api_router.get("/auth/me")
-async def auth_me(neg: dict = Depends(get_current_negoziante)):
-    return neg
+async def auth_me(user: dict = Depends(get_current_user)):
+    return user
 
 
 @api_router.get("/negoziante/coupons")
@@ -523,6 +588,91 @@ async def negoziante_redeem(payload: RedeemRequest, neg: dict = Depends(get_curr
     if coupon["locale"] != neg["locale"]:
         raise HTTPException(status_code=403, detail=f"Coupon di un altro locale: {coupon['locale']}")
     return await _do_redeem(coupon, code)
+
+
+# ---------------------------------------------------------------------------
+# WebSocket (real-time admin notifications) ---------------------------------
+# ---------------------------------------------------------------------------
+@app.websocket("/api/ws/notifications")
+async def ws_notifications(websocket: WebSocket):
+    token = websocket.query_params.get("token")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("role") != "admin":
+            raise ValueError("not admin")
+    except Exception:
+        await websocket.close(code=1008)
+        return
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except Exception:
+        ws_manager.disconnect(websocket)
+
+
+# ---------------------------------------------------------------------------
+# Weekly report (scheduled via .emergent/crons.yml) -------------------------
+# ---------------------------------------------------------------------------
+def _weekly_report_html(groups: dict, total: int, since_label: str) -> str:
+    rows = ""
+    for locale, items in groups.items():
+        rows += (
+            f'<tr><td style="padding:6px 0;color:#94A3B8">{escape(locale)}</td>'
+            f'<td style="padding:6px 0;text-align:right"><strong>{len(items)}</strong></td></tr>'
+        )
+    if not rows:
+        rows = '<tr><td style="padding:6px 0;color:#94A3B8">Nessun riscatto in questa settimana.</td><td></td></tr>'
+    return (
+        '<table role="presentation" width="100%" style="background:#0C0D0E;padding:24px">'
+        '<tr><td style="font-family:Arial,sans-serif;color:#F8FAFC;max-width:520px;margin:auto">'
+        '<h2 style="color:#F59E0B;margin:0 0 12px">Report settimanale \U0001F4CA</h2>'
+        f'<p>Coupon riscattati dal {escape(since_label)} a oggi: <strong>{total}</strong>.</p>'
+        '<table role="presentation" width="100%" style="background:#141619;border-radius:12px;padding:16px;margin:16px 0">'
+        '<tr><td style="padding:6px 0;color:#64748B">Locale</td>'
+        '<td style="padding:6px 0;text-align:right;color:#64748B">Riscatti</td></tr>'
+        f'{rows}'
+        '</table>'
+        '<p style="font-size:12px;color:#64748B">Inviato da La Sfida dei Locali. '
+        'Non chiediamo mai password o dati della carta via email.</p>'
+        '</td></tr></table>'
+    )
+
+
+async def _send_weekly_report(run_id: str) -> None:
+    if run_id:
+        if await db.cron_runs.find_one({"_id": run_id}):
+            return
+        await db.cron_runs.insert_one({"_id": run_id, "at": now_iso()})
+    since_dt = datetime.now(timezone.utc) - timedelta(days=7)
+    since = since_dt.isoformat()
+    notifs = await db.notifications.find({"created_at": {"$gte": since}}, {"_id": 0}).to_list(5000)
+    groups = {}
+    for n in notifs:
+        groups.setdefault(n.get("locale", "-"), []).append(n)
+    settings = await db.settings.find_one({"_id": "app"})
+    admin_email = (settings or {}).get("notification_email") or DEFAULT_ADMIN_EMAIL
+    if not admin_email:
+        return
+    try:
+        await send_email(
+            to=admin_email,
+            subject=f"Report settimanale - {len(notifs)} riscatti",
+            html=_weekly_report_html(groups, len(notifs), since_dt.strftime("%d/%m/%Y")),
+        )
+    except Exception as e:
+        logger.error(f"Weekly report email failed: {e}")
+
+
+@api_router.post("/cron/weekly-report")
+async def cron_weekly_report(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    token = _token_from_request(request) or ""
+    if not WEBHOOK_CRON_SECRET or not secrets.compare_digest(token, WEBHOOK_CRON_SECRET):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    run_id = request.headers.get("X-Webhook-Id", "")
+    asyncio.create_task(_send_weekly_report(run_id))
+    return {"status": "accepted"}
 
 
 # ---------------------------------------------------------------------------
@@ -597,8 +747,24 @@ async def seed_db():
 async def ensure_indexes():
     try:
         await db.negozianti.create_index("email", unique=True)
+        await db.admins.create_index("email", unique=True)
     except Exception as e:
         logger.error(f"Index creation failed: {e}")
+    # seed / update the admin account (idempotent)
+    if ADMIN_EMAIL and ADMIN_PASSWORD:
+        existing = await db.admins.find_one({"email": ADMIN_EMAIL})
+        if not existing:
+            await db.admins.insert_one({
+                "id": str(uuid.uuid4()),
+                "name": "Admin",
+                "email": ADMIN_EMAIL,
+                "password_hash": hash_password(ADMIN_PASSWORD),
+                "created_at": now_iso(),
+            })
+        elif not verify_password(ADMIN_PASSWORD, existing["password_hash"]):
+            await db.admins.update_one(
+                {"email": ADMIN_EMAIL}, {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}}
+            )
 
 
 app.include_router(api_router)

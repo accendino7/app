@@ -4,14 +4,14 @@ import { login as apiLogin, getMe, setToken, getToken } from "@/api";
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [negoziante, setNegoziante] = useState(null);
+  const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
     (async () => {
       if (getToken()) {
         try {
-          setNegoziante(await getMe());
+          setUser(await getMe());
         } catch {
           setToken(null);
         }
@@ -23,17 +23,17 @@ export function AuthProvider({ children }) {
   const signIn = useCallback(async (email, password) => {
     const res = await apiLogin({ email, password });
     setToken(res.token);
-    setNegoziante(res.negoziante);
-    return res.negoziante;
+    setUser(res.user);
+    return res.user;
   }, []);
 
   const signOut = useCallback(() => {
     setToken(null);
-    setNegoziante(null);
+    setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ negoziante, checking, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, checking, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

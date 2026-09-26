@@ -70,7 +70,7 @@ function LoginForm() {
 }
 
 function ScannerTerminal({ refreshNotifications }) {
-  const { negoziante, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -160,7 +160,7 @@ function ScannerTerminal({ refreshNotifications }) {
           <p className="text-[11px] uppercase tracking-[0.25em] text-[#F59E0B] font-semibold">Terminale Negoziante</p>
           <h1 className="font-display text-2xl sm:text-3xl font-black tracking-tight mt-0.5">Spara il Coupon</h1>
           <p className="text-[#94A3B8] mt-1 text-sm flex items-center gap-1.5">
-            <MapPin className="w-4 h-4 text-[#EA580C]" /> {negoziante.locale}
+            <MapPin className="w-4 h-4 text-[#EA580C]" /> {user.locale}
           </p>
         </div>
         <Button data-testid="logout-btn" onClick={signOut} variant="outline"
@@ -260,9 +260,9 @@ function ScannerTerminal({ refreshNotifications }) {
 }
 
 export default function NegozianteView({ refreshNotifications }) {
-  const { negoziante, checking } = useAuth();
+  const { user, checking } = useAuth();
   if (checking) {
     return <div className="text-center py-20 text-[#64748B]">Caricamento...</div>;
   }
-  return negoziante ? <ScannerTerminal refreshNotifications={refreshNotifications} /> : <LoginForm />;
+  return user?.role === "negoziante" ? <ScannerTerminal refreshNotifications={refreshNotifications} /> : <LoginForm />;
 }
