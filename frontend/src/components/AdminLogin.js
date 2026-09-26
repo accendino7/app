@@ -39,7 +39,7 @@ export default function AdminLogin() {
           <ShieldCheck className="w-7 h-7 text-black" />
         </div>
         <h1 className="font-display text-3xl font-black tracking-tight">Accesso Admin</h1>
-        <p className="text-[#94A3B8] mt-1 text-sm">Area riservata: crea sfide e gestisci i negozianti.</p>
+        <p className="text-[#94A3B8] mt-1 text-sm">La Sfida Dei Locali</p>
       </div>
       <form onSubmit={submit} className="fade-up rounded-3xl bg-[#141619] border border-white/10 p-6 space-y-4">
         <div>

@@ -3,37 +3,32 @@
 ## Problem statement (verbatim)
 "crea una webapp che si chiama la sfida dei locali, dove si crea un coupon a tempo, esempio 96 ore dall'evento, quando il vincitore va in negozio, il negoziante spara il coupon e a noi arriva una notifica che è stato usato"
 
-## User choices
-- Ruoli: Admin + Negoziante + Cliente (role switcher in header)
-- Login: solo i Negozianti (JWT email+password, token Bearer in localStorage). Admin e Cliente senza login. Account negoziante creati dall'Admin.
-- Riscatto: scansione QR code + inserimento manuale codice
-- Notifica riscatto: in-app dashboard admin (real-time, beep+toast) + email
-- Vincitore: assegnato manualmente dall'admin; il vincitore non fornisce dati (email tessera solo se l'admin la inserisce)
-- Email notifiche admin: eugeniumnapoli@gmail.com (configurabile in dashboard)
+## Ruoli & accesso
+- Admin: LOGIN richiesto (JWT). Crea sfide, assegna coupon, gestisce negozianti, storico/CSV, config email, notifiche real-time.
+- Negoziante: LOGIN richiesto (JWT), scoped al proprio locale ("spara il coupon" QR/codice).
+- Cliente/Vincitore: pubblico (tessera QR + countdown, deep-link ?coupon=CODE). Nessun dato richiesto.
+- Token unico JWT (role) in localStorage `sfida_token`. Account admin seed da .env; account negoziante creati dall'Admin.
 
 ## Architecture
-- Frontend: React (CRA), Tailwind, shadcn/ui, framer-motion, qrcode.react, html5-qrcode, canvas-confetti; AuthContext + localStorage token
-- Backend: FastAPI + MongoDB (motor). Route con prefisso /api. JWT (PyJWT) + bcrypt
-- Email: Emergent managed Resend (invio in background, non-blocking) — notifica riscatto all'admin + tessera al vincitore
-
-## Personas
-- Admin: crea sfide, assegna coupon, gestisce account negozianti, monitora statistiche/notifiche, storico riscatti (CSV)
-- Negoziante: login → "spara il coupon" al bancone (QR o codice), scoped al proprio locale
-- Cliente/Vincitore: mostra la tessera coupon con QR + countdown (deep-link ?coupon=CODE)
+- Frontend: React (CRA), Tailwind, shadcn/ui, framer-motion, qrcode.react, html5-qrcode, canvas-confetti, AuthContext
+- Backend: FastAPI + MongoDB (motor), JWT (PyJWT) + bcrypt, WebSocket real-time, qrcode (PNG)
+- Email: Emergent managed Resend (background, non-blocking)
+- Cron: `.emergent/crons.yml` (report settimanale, endpoint /api/cron/weekly-report protetto da WEBHOOK_CRON_SECRET)
 
 ## Implemented
-### 2026-06 (MVP)
-- Role switcher a 3 ruoli; sfide + coupon a tempo con countdown; riscatto QR+codice; notifiche in-app + email; seed 3 locali; testato 7/7 backend, 100% frontend
-### 2026-06 (Iterazione 2)
-- Tessera al Vincitore via email (link a QR+countdown) se l'admin inserisce winner_email
-- Notifiche istantanee: polling 3s + beep sonoro + toast per l'Admin (baseline seenCountRef, nessun toast al load)
-- Storico Riscatti: tab Admin con filtri per locale/sfida + export CSV
-- Accesso Negozianti: login JWT scoped al locale; gestione account negoziante dall'Admin (crea/lista/elimina); redeem scoped (403 cross-locale, 401 senza token)
-- Testato: backend 15/15, frontend 100%
+### 2026-06 MVP
+- Role switcher; sfide + coupon a tempo con countdown; riscatto QR+codice; notifiche in-app + email; seed 3 locali. (7/7, 100%)
+### 2026-06 Iterazione 2
+- Tessera vincitore via email (link); notifiche istantanee (beep+toast); Storico + CSV; login Negozianti JWT scoped; gestione account negoziante. (15/15, 100%)
+### 2026-06 Iterazione 3
+- Notifiche Push real-time via WebSocket (fallback polling 15s) per l'Admin
+- Pannello Admin protetto da login (endpoint admin: 401 senza token, 403 per negoziante)
+- QR code (immagine) dentro l'email della tessera vincitore + endpoint pubblico /api/coupons/{code}/qr.png (cache 24h)
+- Report settimanale via email all'admin (cron lunedì 08:00 UTC)
+- Verificato: backend 28/28, frontend 100%, WebSocket end-to-end confermato
 
 ## Backlog (P1/P2)
-- P1: Push/websocket real-time al posto del polling
-- P1: Restringere gli endpoint admin (GET/POST/DELETE /negozianti) dietro un ruolo admin autenticato
-- P2: Login/ruoli per Admin e Cliente (se necessario in futuro)
-- P2: Multi-negozio per singolo negoziante; QR embed diretto nell'email
-- P2: Refactor server.py in moduli (auth, email, seed)
+- P1: heartbeat/ping sul WebSocket per connessioni idle dietro proxy
+- P2: migrare startup/shutdown a lifespan handlers (FastAPI ≥0.109)
+- P2: split server.py in moduli (auth/email/routes/websocket/cron)
+- P2: multi-negozio per singolo negoziante; login per Cliente se necessario

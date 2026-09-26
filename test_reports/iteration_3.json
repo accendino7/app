@@ -1,0 +1,21 @@
+{
+  "summary": "Iteration 3 covers: (1) Admin login gate, (2) admin-protected endpoints, (3) real-time WebSocket admin notifications, (4) QR PNG endpoint public, (5) weekly cron report. Backend: 28/28 pytest tests passed on public URL: admin login OK + 401 on wrong password; GET /api/stats,/notifications,/negozianti,/settings return 401 without token / 403 with negoziante token / 200 with admin token; POST /api/sfide, POST /api/coupons, PUT /api/settings 401 without admin; admin can create sfida + coupon with winner_email; GET /api/coupons/{code}/qr.png returns 200 image/png with valid PNG magic bytes (seeded + newly created); cron POST /api/cron/weekly-report -> 401 without header, 401 with wrong secret, 200 {status:accepted} with valid WEBHOOK_CRON_SECRET; scoped redeem 403 cross-locale, 200 own; notification created on public redeem. Frontend (Playwright on public URL): unauth admin role shows AdminLogin (no bell); wrong password shows inline admin-login-error='Email o password non validi'; correct login (eugeniumnapoli@gmail.com/SfidaAdmin2026) opens dashboard with stats and bell + header-logout-btn; NO stray 'riscattato' toast on initial admin load (baseline seenCountRef correct); triggering a public redeem while admin is on dashboard produced a Sonner toast 'Coupon SFIDA-NKM3I riscattato' and bell counter went 4->5 within ~3s (WebSocket delivery); header-logout-btn returns to AdminLogin gate; bell hidden for negoziante/cliente roles.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 783 lines (crossed the 700-line threshold). Consider splitting into modules: auth.py (JWT, hashing, deps, seed admin), email.py (send_email, HTML builders, safety scan), routes_admin.py, routes_negoziante.py, routes_public.py, websocket.py, cron.py.",
+    "WSManager.broadcast: on failure it mutates self.active (via self.disconnect) while iterating list(active) — OK because of list() copy, but consider using a per-connection lock to avoid interleaved sends. Also there's no ping/heartbeat, so idle connections behind proxies may drop silently (mitigated by 15s polling fallback).",
+    "@app.on_event('startup'/'shutdown') is deprecated in FastAPI ≥0.109; migrate to lifespan handlers.",
+    "/api/coupons/{code}/qr.png caches nothing (no Cache-Control) — for email clients it's fetched every time. Consider setting Cache-Control: public, max-age=86400.",
+    "compute_status still swallows exceptions on expires_at parse silently (carried over from iter2)."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py", "/app/test_reports/iteration_3.json"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: eugeniumnapoli@gmail.com/SfidaAdmin2026 ; negoziante: navigli@sfida.it/negoziante123 ; WEBHOOK_CRON_SECRET=c7f2a9e14b6d4c8fa0e3b512d9764af18e2c5b3a7d0f6e94",
+  "seed_data_creation": "Created several TEST_ sfide+coupons; one public redeem via /api/coupons/redeem to exercise WS. Cron endpoint was invoked with valid secret (best-effort email to admin).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "AdminLogin testids: admin-email-input, admin-password-input, admin-login-submit-btn, admin-login-error. header-logout-btn. Single 'sfida_token' in localStorage — logout to swap identities. WebSocket admin delivery verified end-to-end (bell 4->5, toast within ~3s). Cron secret to be read from backend/.env WEBHOOK_CRON_SECRET."
+}

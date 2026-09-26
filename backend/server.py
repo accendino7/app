@@ -338,7 +338,8 @@ async def coupon_qr(code: str):
     img = qrcode.make(code)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    return Response(content=buf.getvalue(), media_type="image/png")
+    return Response(content=buf.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @api_router.post("/coupons")

@@ -24,7 +24,7 @@ export default function HeaderNav({ role, setRole, user, notifications, refreshN
           </div>
           <div className="leading-tight">
             <p className="font-display font-extrabold text-[15px] tracking-tight">La Sfida dei Locali</p>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-[#64748B] hidden sm:block">Coupon a tempo</p>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-[#64748B] hidden sm:block">winter edition</p>
           </div>
         </div>
 
