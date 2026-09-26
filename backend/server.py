@@ -484,7 +484,9 @@ async def create_negoziante(payload: NegozianteCreate):
 
 @api_router.delete("/negozianti/{neg_id}")
 async def delete_negoziante(neg_id: str):
-    await db.negozianti.delete_one({"id": neg_id})
+    res = await db.negozianti.delete_one({"id": neg_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Account non trovato")
     return {"ok": True}
 
 

@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 2 covers new features: JWT negoziante login, scoped redeem, Admin negozianti management, Storico + CSV export, winner email, instant admin notifications, and cliente deep-link. Backend: 15/15 pytest tests passed on public URL (auth login OK+invalid, /auth/me guard, /negoziante/coupons scoped to locale, cross-locale redeem 403, own-locale 200, 409 already used, negozianti CRUD + duplicate 409, coupon create with winner_email 200, notification created on redeem, settings persist). Frontend: role toggle to Negoziante shows login form; wrong password rejected (401, form stays); correct login (navigli@sfida.it/negoziante123) opens scanner terminal with 'Botanical Bar Navigli' label + logout button; SPARA COUPON on cross-locale code shows 'NON VALIDO · Coupon di un altro locale'; own-locale code shows 'VALIDO · BRUCIATO'; logout returns to login. Admin: tab-negozianti create+list+delete works (count 4→5→4); tab-storico shows rows, locale filter narrows rows, 'Esporta CSV' downloads storico_riscatti.csv; Assegna Coupon with winner_email=delivered@resend.dev returns 200 and toast reads 'assegnato ... · email inviata'. Instant admin notification: with page on Admin, redeeming a coupon via public API triggers a toast 'Coupon SFIDA-XXXXX riscattato' and bell counter increments (4→5) within ~5s of polling — NO stray toast at initial page load. Deep-link /?coupon=SFIDA-21285 lands on Vincitore role with that coupon preselected + QR + status. Regression: role switcher, admin stats, coupon list still fine.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Negoziante Login", "issues": ["Wrong-password error is only shown via Sonner toast; no inline error text inside the login card. Users who dismiss the toast lose feedback. Consider adding inline error under the password field."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "(Minor) Add inline error text in NegozianteView LoginForm below Password field for a11y and persistent feedback (not just toast)."
+  ],
+  "critical_code_review_comments": [
+    "server.py now ~615 lines — approaching split threshold; consider extracting auth (jwt/hashing/deps), email helpers, and seed into modules.",
+    "GET /api/negozianti is open (no auth). Since it exposes emails/locale of shop accounts, either restrict to an admin token or accept the current 'admin panel is open by design'; document explicitly.",
+    "DELETE /api/negozianti/{id} is unauthenticated and returns 200 even when the id does not exist — consider returning 404 for missing accounts.",
+    "_do_redeem uses asyncio.create_task for email — good non-blocking; however background exceptions are only logged in _notify_redeem_email/_notify_winner_email (OK).",
+    "compute_status silently swallows exceptions on expires_at parse — add a debug log."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py", "/app/test_reports/iteration_2.json"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "navigli@sfida.it / negoziante123 (Botanical Bar Navigli). sole@sfida.it, michele@sfida.it same password. No admin/cliente login.",
+  "seed_data_creation": "Created a few TEST_ sfide + coupons and one temp negoziante (deleted at test end). Redeemed several test coupons (bell/storico counters therefore increased).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All new features validated end-to-end on public URL. Bell counter uses seenCountRef baseline (no stray toast on initial load) — verified. CSV download filename is 'storico_riscatti.csv'. Locale filter option ordering: first option is 'Tutti i locali' (index 0). Deep-link ?coupon=CODE forces role=client and selects that coupon (verified with SFIDA-21285). Winner email uses Emergent Resend and returns 202; delivered@resend.dev is a safe sink."
+}

@@ -14,15 +14,19 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError("");
     try {
       const neg = await signIn(email.trim(), password);
       toast.success(`Benvenuto, ${neg.name}`);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Accesso non riuscito");
+      const msg = err.response?.data?.detail || "Accesso non riuscito";
+      setError(typeof msg === "string" ? msg : "Accesso non riuscito");
+      toast.error(typeof msg === "string" ? msg : "Accesso non riuscito");
     } finally {
       setLoading(false);
     }
@@ -50,6 +54,9 @@ function LoginForm() {
             onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
             className="bg-black/40 border-white/10" />
         </div>
+        {error && (
+          <p data-testid="login-error" className="text-sm text-[#EF4444] -mt-1">{error}</p>
+        )}
         <Button data-testid="login-submit-btn" type="submit" disabled={loading}
           className="w-full h-12 font-bold bg-gradient-to-r from-[#F59E0B] to-[#EA580C] text-black hover:opacity-90 disabled:opacity-50">
           <Lock className="w-4 h-4 mr-2" /> {loading ? "Accesso..." : "Entra"}
