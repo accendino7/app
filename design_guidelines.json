@@ -1,0 +1,130 @@
+{
+  "project_name": "La Sfida dei Locali",
+  "app_archetype": "Italian Local Hospitality & High-Tension Coupon Redemption System",
+  "theme_strategy": {
+    "default_mode": "dark",
+    "theme_rationale": "Sleek nightlife, local bistros, and cocktail bar vibe blended with tactical countdown urgency (obsidian backdrop with warm terracotta, glowing amber, and crisp emerald verification badges).",
+    "background_base": "#0C0D0E",
+    "surface_cards": "#141619",
+    "surface_elevated": "#1B1E22",
+    "surface_glass": "rgba(20, 22, 25, 0.75)",
+    "border_subtle": "rgba(255, 255, 255, 0.08)",
+    "border_highlight": "rgba(249, 115, 22, 0.3)"
+  },
+  "typography": {
+    "heading_font": "Cabinet Grotesk, Outfit, system-ui, sans-serif",
+    "body_font": "Plus Jakarta Sans, Inter, sans-serif",
+    "mono_font": "JetBrains Mono, Menlo, monospace",
+    "h1": "text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight",
+    "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+    "h3": "text-lg sm:text-xl font-semibold tracking-normal",
+    "countdown_display": "font-mono font-bold tracking-widest text-3xl sm:text-4xl"
+  },
+  "color_palette": {
+    "brand_amber": "#F59E0B",
+    "brand_terracotta": "#EA580C",
+    "success_green": "#10B981",
+    "danger_red": "#EF4444",
+    "accent_violet": "#8B5CF6",
+    "text_primary": "#F8FAFC",
+    "text_secondary": "#94A3B8",
+    "text_muted": "#64748B"
+  },
+  "roles_and_views": {
+    "role_switcher": {
+      "location": "Header navigation bar with quick badge toggles",
+      "roles": [
+        {
+          "id": "admin",
+          "label": "Admin Sfide & Notifiche",
+          "description": "Crea sfide, genera coupon a tempo (es. 96h), assegna vincitori e monitora notifiche live di riscatto"
+        },
+        {
+          "id": "negoziante",
+          "label": "Negoziante (Spara Coupon)",
+          "description": "Scanner / lettore QR code o immissione codice per bruciare e convalidare il coupon del vincitore al bancone"
+        },
+        {
+          "id": "cliente",
+          "label": "Cliente Vincitore (Mio Coupon)",
+          "description": "Tessera premio digitale con timer conto alla rovescia attivo (96h), badge stato e QR Code da mostrare al locale"
+        }
+      ]
+    }
+  },
+  "key_components": [
+    {
+      "component_name": "Navbar & Live Notification Center",
+      "path": "frontend/src/components/HeaderNav.js",
+      "description": "Nav bar con Glassmorphism (backdrop-blur-xl bg-[#0c0d0e]/80 border-b border-white/10), badge campana notifiche animate con contatore coupon sparati in tempo reale, selettore rapido ruoli (Admin, Negoziante, Vincitore)."
+    },
+    {
+      "component_name": "Admin Challenge & Coupon Generator",
+      "path": "frontend/src/components/AdminSfideView.js",
+      "description": "Bento dashboard per: 1) Creare nuova sfida (Nome locale, premio es. Aperitivo per due, ore di scadenza es. 96h, cover image); 2) Assegnare coupon a vincitore con nome ed email; 3) Monitorare statistiche (Attivi, Riscattati, Scaduti, Tasso di conversione); 4) Feed real-time delle notifiche di riscatto con timestamp."
+    },
+    {
+      "component_name": "Negoziante Spara-Coupon Terminal",
+      "path": "frontend/src/components/NegozianteScannerView.js",
+      "description": "Interfaccia ottimizzata per smartphone/tablet da banco. Input 'Spara Codice' rapido a grandi cifre, simulatore o trigger webcam scanner QR, verifica istantanea con feedback sonoro/visivo (Verde: VALIDO - Brucia Coupon; Rosso: GIÀ USATO o SCADUTO), log ultimi coupon convalidati oggi."
+    },
+    {
+      "component_name": "Cliente Winner Pass & Countdown Ticket",
+      "path": "frontend/src/components/ClienteVoucherTicket.js",
+      "description": "Ticket ultra-rifinito in stile pass da concerto / luxury boarding pass con bordi traforati a contrasto, QR code ad alta risoluzione (usando qrcode.react o svg generato), countdown animato al secondo (giorni, ore, minuti, secondi), istruzioni 'Mostra questo codice alla cassa del locale entro la scadenza'."
+    },
+    {
+      "component_name": "Real-time Notification Bell & Toast Banner",
+      "path": "frontend/src/components/NotificationFeed.js",
+      "description": "Pannello a cassetto (drawer o popover) che elenca tutte le notifiche istantanee arrivate quando il negoziante 'spara il coupon' (es: 'Coupon SFIDA-96-X4A convalidato da Osteria del Sole per Marco R.')."
+    }
+  ],
+  "curated_image_assets": [
+    {
+      "category": "locale_trattoria_outdoor",
+      "url": "https://images.unsplash.com/photo-1593548615309-5a45c504f994?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwzfHxpdGFsaWFuJTIwcmVzdGF1cmFudCUyMGJhciUyMGNhZmUlMjBzaG9wfGVufDB8fHx8MTc5MDM5MjczM3ww&ixlib=rb-4.1.0&q=85",
+      "description": "Trattoria italiana tipica con tavoli all'aperto, tovaglie a quadri e bottiglie di vino"
+    },
+    {
+      "category": "locale_cocktail_bistro",
+      "url": "https://images.unsplash.com/photo-1616091216791-a5360b5fc78a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwxfHxpdGFsaWFuJTIwcmVzdGF1cmFudCUyMGJhciUyMGNhZmUlMjBzaG9wfGVufDB8fHx8MTc5MDM5MjczM3ww&ixlib=rb-4.1.0&q=85",
+      "description": "Bistrot cocktail bar con lucine calde e atmosfera serale accogliente"
+    },
+    {
+      "category": "locale_pizza_gourmet",
+      "url": "https://images.unsplash.com/photo-1660561973160-27dbd9963ed3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwyfHxhcnRpc2FuYWwlMjBiYWtlcnklMjBwaXp6YSUyMGNvY2t0YWlsfGVufDB8fHx8MTc5MDM5MjczM3ww&ixlib=rb-4.1.0&q=85",
+      "description": "Pizza artigianale napoletana sfornata a legna"
+    },
+    {
+      "category": "locale_cocktail_spritz",
+      "url": "https://images.unsplash.com/photo-1576829825117-5eec77b70fcb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHw0fHxhcnRpc2FuYWwlMjBiYWtlcnklMjBwaXp6YSUyMGNvY2t0YWlsfGVufDB8fHx8MTc5MDM5MjczM3ww&ixlib=rb-4.1.0&q=85",
+      "description": "Cocktail artigianale per aperitivo serale nei locali"
+    }
+  ],
+  "testing_attributes": {
+    "role_toggle_admin": "data-testid='role-toggle-admin'",
+    "role_toggle_shop": "data-testid='role-toggle-shop'",
+    "role_toggle_client": "data-testid='role-toggle-client'",
+    "create_challenge_btn": "data-testid='create-challenge-btn'",
+    "challenge_title_input": "data-testid='challenge-title-input'",
+    "challenge_venue_input": "data-testid='challenge-venue-input'",
+    "challenge_expiry_hours_input": "data-testid='challenge-expiry-hours-input'",
+    "submit_challenge_btn": "data-testid='submit-challenge-btn'",
+    "create_coupon_btn": "data-testid='create-coupon-btn'",
+    "coupon_winner_name_input": "data-testid='coupon-winner-name-input'",
+    "submit_coupon_btn": "data-testid='submit-coupon-btn'",
+    "scanner_code_input": "data-testid='scanner-code-input'",
+    "shoot_coupon_btn": "data-testid='shoot-coupon-btn'",
+    "coupon_status_badge": "data-testid='coupon-status-badge'",
+    "ticket_countdown_timer": "data-testid='ticket-countdown-timer'",
+    "notifications_trigger_btn": "data-testid='notifications-trigger-btn'",
+    "notification_item": "data-testid='notification-item'"
+  },
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "language": "Italian UI (all labels, buttons, headers, statuses, and toast alerts in Italian)",
+    "no_mock_labels": "Do not show 'mocked' text in visible UI; provide rich authentic pre-seeded data for Italian venues (e.g. 'Osteria del Sole', 'Pizzeria Da Michele', 'Botanical Bar Navigli') with real 96-hour active coupons",
+    "sound_or_haptic_vibration": "When the negoziante clicks 'Spara Coupon' (shoot coupon), show high-impact redemption animation with confetti or celebratory pulse, and immediate push to the notifications feed",
+    "backend_integration": "Use FastAPI backend to persist sfide, coupons, and notifications in memory / DB with full REST endpoints (GET /api/sfide, POST /api/sfide, POST /api/coupons, POST /api/coupons/redeem, GET /api/notifications)",
+    "responsive_design": "Negoziante and Cliente screens must be 100% mobile-friendly with large touch targets, as shopkeepers use mobile phones to shoot coupons"
+  }
+}
