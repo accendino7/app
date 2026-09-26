@@ -204,3 +204,107 @@ def test_notifications_has_recent_redeem(session, admin_headers):
     time.sleep(0.5)
     notifs = session.get(f"{API}/notifications", headers=admin_headers).json()
     assert any(n["code"] == coupon["code"] for n in notifs)
+
+
+# ------------------------------------------------------------------
+# Iteration 4: Negoziante-proposed coupons + admin approval workflow
+# ------------------------------------------------------------------
+def test_iter4_negoziante_creates_pending_coupon(session, admin_headers, navigli_token):
+    # Ensure a sfida exists for Botanical Bar Navigli
+    sfida = session.post(f"{API}/sfide", headers=admin_headers, json={
+        "titolo": "TEST_it4_sfida", "locale": "Botanical Bar Navigli",
+        "premio": "TEST_it4_prize", "expiry_hours": 24,
+    }).json()
+
+    # Negoziante submits request
+    r = session.post(f"{API}/negoziante/coupons",
+                     headers={"Authorization": f"Bearer {navigli_token}"},
+                     json={"sfida_id": sfida["id"], "winner_name": "TEST_it4_winner"})
+    assert r.status_code == 200, r.text
+    coupon = r.json()
+    assert coupon["status"] == "in_attesa"
+    assert coupon["approval_status"] == "pending"
+    assert coupon["locale"] == "Botanical Bar Navigli"
+    assert coupon["code"].startswith("SFIDA-")
+
+    # Redeem while pending -> 409
+    r = session.post(f"{API}/negoziante/redeem",
+                     headers={"Authorization": f"Bearer {navigli_token}"},
+                     json={"code": coupon["code"]})
+    assert r.status_code == 409
+    assert "attesa" in r.json()["detail"].lower()
+
+    # Appears in /coupon-requests
+    reqs = session.get(f"{API}/coupon-requests", headers=admin_headers).json()
+    assert any(x["code"] == coupon["code"] for x in reqs)
+
+    # Approve -> becomes active
+    r = session.post(f"{API}/coupons/{coupon['id']}/approve", headers=admin_headers)
+    assert r.status_code == 200
+    assert r.json()["status"] == "attivo"
+    assert r.json()["approval_status"] == "approved"
+
+    # Now redeemable
+    r = session.post(f"{API}/negoziante/redeem",
+                     headers={"Authorization": f"Bearer {navigli_token}"},
+                     json={"code": coupon["code"]})
+    assert r.status_code == 200
+    assert r.json()["coupon"]["status"] == "riscattato"
+
+    # Re-approve already handled -> 409
+    r = session.post(f"{API}/coupons/{coupon['id']}/approve", headers=admin_headers)
+    assert r.status_code == 409
+
+
+def test_iter4_admin_rejects_request(session, admin_headers, navigli_token):
+    sfida = session.post(f"{API}/sfide", headers=admin_headers, json={
+        "titolo": "TEST_it4_reject", "locale": "Botanical Bar Navigli",
+        "premio": "TEST_reject_prize", "expiry_hours": 24,
+    }).json()
+    coupon = session.post(f"{API}/negoziante/coupons",
+                          headers={"Authorization": f"Bearer {navigli_token}"},
+                          json={"sfida_id": sfida["id"], "winner_name": "TEST_reject_w"}).json()
+
+    r = session.post(f"{API}/coupons/{coupon['id']}/reject", headers=admin_headers)
+    assert r.status_code == 200
+    assert r.json()["status"] == "rifiutato"
+    assert r.json()["approval_status"] == "rejected"
+
+    # Not redeemable
+    r = session.post(f"{API}/negoziante/redeem",
+                     headers={"Authorization": f"Bearer {navigli_token}"},
+                     json={"code": coupon["code"]})
+    assert r.status_code == 409
+    assert "rifiutato" in r.json()["detail"].lower()
+
+    # No longer in pending list
+    reqs = session.get(f"{API}/coupon-requests", headers=admin_headers).json()
+    assert not any(x["code"] == coupon["code"] for x in reqs)
+
+
+def test_iter4_negoziante_cannot_request_other_locale(session, admin_headers, navigli_token):
+    sfida = session.post(f"{API}/sfide", headers=admin_headers, json={
+        "titolo": "TEST_it4_other", "locale": "Osteria del Sole",
+        "premio": "prize", "expiry_hours": 24,
+    }).json()
+    r = session.post(f"{API}/negoziante/coupons",
+                     headers={"Authorization": f"Bearer {navigli_token}"},
+                     json={"sfida_id": sfida["id"], "winner_name": "x"})
+    assert r.status_code == 403
+
+
+def test_iter4_coupon_requests_requires_admin(session, navigli_token):
+    r = session.get(f"{API}/coupon-requests")
+    assert r.status_code == 401
+    r = session.get(f"{API}/coupon-requests",
+                    headers={"Authorization": f"Bearer {navigli_token}"})
+    assert r.status_code == 403
+
+
+def test_iter4_negoziante_coupons_requires_negoziante(session, admin_headers):
+    r = session.post(f"{API}/negoziante/coupons", json={"sfida_id": "x", "winner_name": "y"})
+    assert r.status_code == 401
+    # admin token has no locale -> 403
+    r = session.post(f"{API}/negoziante/coupons", headers=admin_headers,
+                     json={"sfida_id": "x", "winner_name": "y"})
+    assert r.status_code == 403
