@@ -301,22 +301,26 @@ async def redeem_coupon(payload: RedeemRequest):
     }
     await db.notifications.insert_one(dict(notif))
 
-    # email notification (best effort, never blocks redemption)
+    # email notification (best effort, non-blocking — never delays redemption)
     settings = await db.settings.find_one({"_id": "app"})
     admin_email = (settings or {}).get("notification_email") or DEFAULT_ADMIN_EMAIL
-    email_sent = False
+    email_queued = False
     if admin_email:
-        try:
-            await send_email(
-                to=admin_email,
-                subject=f"Coupon usato: {coupon['code']} - {coupon['locale']}",
-                html=_redeem_email_html(coupon),
-            )
-            email_sent = True
-        except Exception as e:
-            logger.error(f"Email notify failed: {e}")
+        asyncio.create_task(_notify_redeem_email(admin_email, dict(coupon)))
+        email_queued = True
 
-    return {"coupon": serialize_coupon(coupon), "notification": {k: v for k, v in notif.items()}, "email_sent": email_sent}
+    return {"coupon": serialize_coupon(coupon), "notification": {k: v for k, v in notif.items()}, "email_sent": email_queued}
+
+
+async def _notify_redeem_email(admin_email: str, coupon: dict) -> None:
+    try:
+        await send_email(
+            to=admin_email,
+            subject=f"Coupon usato: {coupon['code']} - {coupon['locale']}",
+            html=_redeem_email_html(coupon),
+        )
+    except Exception as e:
+        logger.error(f"Email notify failed: {e}")
 
 
 @api_router.get("/notifications")
