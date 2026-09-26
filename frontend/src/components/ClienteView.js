@@ -3,17 +3,21 @@ import { getCoupons } from "@/api";
 import CouponTicket from "@/components/CouponTicket";
 import { Ticket } from "lucide-react";
 
-export default function ClienteView() {
+export default function ClienteView({ initialCode }) {
   const [coupons, setCoupons] = useState([]);
   const [selected, setSelected] = useState(null);
 
   useEffect(() => {
     getCoupons().then((data) => {
       setCoupons(data);
-      const active = data.find((c) => c.status === "attivo") || data[0];
-      setSelected(active?.code || null);
+      if (initialCode && data.some((c) => c.code === initialCode)) {
+        setSelected(initialCode);
+      } else {
+        const active = data.find((c) => c.status === "attivo") || data[0];
+        setSelected(active?.code || null);
+      }
     });
-  }, []);
+  }, [initialCode]);
 
   const current = coupons.find((c) => c.code === selected);
 

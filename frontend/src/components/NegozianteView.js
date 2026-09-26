@@ -1,19 +1,87 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import confetti from "canvas-confetti";
 import { Html5Qrcode } from "html5-qrcode";
-import { Flame, Camera, CameraOff, CheckCircle2, XCircle, MapPin, Gift } from "lucide-react";
+import { Flame, Camera, CameraOff, CheckCircle2, XCircle, MapPin, Gift, LogOut, Store, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { redeemCoupon } from "@/api";
+import { Label } from "@/components/ui/label";
+import { useAuth } from "@/context/AuthContext";
+import { negozianteRedeem, getMyCoupons } from "@/api";
 
-export default function NegozianteView({ refreshNotifications }) {
+function LoginForm() {
+  const { signIn } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const neg = await signIn(email.trim(), password);
+      toast.success(`Benvenuto, ${neg.name}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Accesso non riuscito");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="max-w-sm mx-auto">
+      <div className="fade-up text-center mb-6">
+        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#F59E0B] to-[#EA580C] flex items-center justify-center mx-auto mb-4">
+          <Store className="w-7 h-7 text-black" />
+        </div>
+        <h1 className="font-display text-3xl font-black tracking-tight">Accesso Negoziante</h1>
+        <p className="text-[#94A3B8] mt-1 text-sm">Entra per sparare i coupon del tuo locale.</p>
+      </div>
+      <form onSubmit={submit} className="fade-up rounded-3xl bg-[#141619] border border-white/10 p-6 space-y-4">
+        <div>
+          <Label className="text-xs text-[#94A3B8] mb-1.5 block">Email</Label>
+          <Input data-testid="login-email-input" type="email" value={email}
+            onChange={(e) => setEmail(e.target.value)} placeholder="navigli@sfida.it"
+            className="bg-black/40 border-white/10" />
+        </div>
+        <div>
+          <Label className="text-xs text-[#94A3B8] mb-1.5 block">Password</Label>
+          <Input data-testid="login-password-input" type="password" value={password}
+            onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+            className="bg-black/40 border-white/10" />
+        </div>
+        <Button data-testid="login-submit-btn" type="submit" disabled={loading}
+          className="w-full h-12 font-bold bg-gradient-to-r from-[#F59E0B] to-[#EA580C] text-black hover:opacity-90 disabled:opacity-50">
+          <Lock className="w-4 h-4 mr-2" /> {loading ? "Accesso..." : "Entra"}
+        </Button>
+        <p className="text-[11px] text-[#64748B] text-center">
+          Gli account negoziante vengono creati dall'Admin.
+        </p>
+      </form>
+    </div>
+  );
+}
+
+function ScannerTerminal({ refreshNotifications }) {
+  const { negoziante, signOut } = useAuth();
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null); // { ok, message, coupon }
-  const [log, setLog] = useState([]);
+  const [result, setResult] = useState(null);
+  const [myCoupons, setMyCoupons] = useState([]);
   const [scanning, setScanning] = useState(false);
   const scannerRef = useRef(null);
+
+  const loadCoupons = useCallback(async () => {
+    try {
+      setMyCoupons(await getMyCoupons());
+    } catch (e) {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCoupons();
+  }, [loadCoupons]);
 
   const fireConfetti = () => {
     confetti({ particleCount: 120, spread: 75, origin: { y: 0.6 }, colors: ["#F59E0B", "#EA580C", "#10B981"] });
@@ -27,16 +95,15 @@ export default function NegozianteView({ refreshNotifications }) {
     }
     setLoading(true);
     try {
-      const res = await redeemCoupon(c);
+      const res = await negozianteRedeem(c);
       setResult({ ok: true, coupon: res.coupon });
-      setLog((l) => [{ code: res.coupon.code, locale: res.coupon.locale, ts: Date.now(), ok: true }, ...l].slice(0, 8));
       toast.success(`Coupon ${res.coupon.code} bruciato!`);
       fireConfetti();
       refreshNotifications();
+      loadCoupons();
     } catch (e) {
       const msg = e.response?.data?.detail || "Errore durante la convalida";
       setResult({ ok: false, message: msg });
-      setLog((l) => [{ code: c.toUpperCase(), ts: Date.now(), ok: false, message: msg }, ...l].slice(0, 8));
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -81,10 +148,18 @@ export default function NegozianteView({ refreshNotifications }) {
 
   return (
     <div className="max-w-lg mx-auto space-y-6">
-      <div className="fade-up text-center">
-        <p className="text-[11px] uppercase tracking-[0.25em] text-[#F59E0B] font-semibold">Terminale Negoziante</p>
-        <h1 className="font-display text-3xl sm:text-4xl font-black tracking-tight mt-1">Spara il Coupon</h1>
-        <p className="text-[#94A3B8] mt-1 text-sm">Scansiona il QR o inserisci il codice del vincitore.</p>
+      <div className="fade-up flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.25em] text-[#F59E0B] font-semibold">Terminale Negoziante</p>
+          <h1 className="font-display text-2xl sm:text-3xl font-black tracking-tight mt-0.5">Spara il Coupon</h1>
+          <p className="text-[#94A3B8] mt-1 text-sm flex items-center gap-1.5">
+            <MapPin className="w-4 h-4 text-[#EA580C]" /> {negoziante.locale}
+          </p>
+        </div>
+        <Button data-testid="logout-btn" onClick={signOut} variant="outline"
+          className="border-white/15 bg-transparent hover:bg-white/5 text-white shrink-0">
+          <LogOut className="w-4 h-4 sm:mr-1.5" /> <span className="hidden sm:inline">Esci</span>
+        </Button>
       </div>
 
       <div className="fade-up rounded-3xl bg-[#141619] border border-white/10 p-6 space-y-4">
@@ -154,21 +229,33 @@ export default function NegozianteView({ refreshNotifications }) {
         </div>
       )}
 
-      {log.length > 0 && (
-        <div className="fade-up">
-          <h3 className="text-sm font-semibold text-[#94A3B8] mb-2">Ultimi coupon di oggi</h3>
-          <div className="space-y-2">
-            {log.map((l, i) => (
-              <div key={i} className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#141619] border border-white/5 text-sm">
-                <span className="font-mono">{l.code}</span>
-                <span className={l.ok ? "text-[#10B981]" : "text-[#EF4444]"}>
-                  {l.ok ? l.locale : l.message}
-                </span>
+      <div className="fade-up">
+        <h3 className="text-sm font-semibold text-[#94A3B8] mb-2">Coupon del tuo locale ({myCoupons.length})</h3>
+        <div className="space-y-2">
+          {myCoupons.length === 0 && <p className="text-[#64748B] text-sm">Nessun coupon per questo locale.</p>}
+          {myCoupons.map((c) => (
+            <div key={c.id} className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-[#141619] border border-white/5 text-sm">
+              <div>
+                <span className="font-mono">{c.code}</span>
+                <span className="text-[#64748B] ml-2">{c.winner_name}</span>
               </div>
-            ))}
-          </div>
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                c.status === "attivo" ? "text-[#F59E0B] bg-[#F59E0B]/10"
+                  : c.status === "riscattato" ? "text-[#10B981] bg-[#10B981]/10"
+                  : "text-[#EF4444] bg-[#EF4444]/10"
+              }`}>{c.status.toUpperCase()}</span>
+            </div>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
+}
+
+export default function NegozianteView({ refreshNotifications }) {
+  const { negoziante, checking } = useAuth();
+  if (checking) {
+    return <div className="text-center py-20 text-[#64748B]">Caricamento...</div>;
+  }
+  return negoziante ? <ScannerTerminal refreshNotifications={refreshNotifications} /> : <LoginForm />;
 }

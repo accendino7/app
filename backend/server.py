@@ -13,8 +13,10 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse
 
 import httpx
+import bcrypt
+import jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
@@ -40,6 +42,46 @@ EMAIL_BASE_URL = "https://integrations.emergentagent.com"
 EMAIL_KEY = os.environ["EMERGENT_EMAIL_KEY"]
 EMAIL_FROM_NAME = os.environ["EMAIL_FROM_NAME"]
 DEFAULT_ADMIN_EMAIL = os.environ.get("ADMIN_NOTIFICATION_EMAIL", "")
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "").rstrip("/")
+
+# Auth (JWT, Bearer header) -------------------------------------------------
+JWT_SECRET = os.environ["JWT_SECRET"]
+JWT_ALGORITHM = "HS256"
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+
+
+def create_access_token(neg_id: str, email: str) -> str:
+    payload = {
+        "sub": neg_id,
+        "email": email,
+        "type": "access",
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_negoziante(request: Request) -> dict:
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else None
+    if not token:
+        raise HTTPException(status_code=401, detail="Non autenticato")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Sessione scaduta")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token non valido")
+    neg = await db.negozianti.find_one({"id": payload.get("sub")}, {"_id": 0, "password_hash": 0})
+    if not neg:
+        raise HTTPException(status_code=401, detail="Account non trovato")
+    return neg
 
 _SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
 _CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
@@ -264,6 +306,8 @@ async def create_coupon(payload: CouponCreate):
         "redeemed_at": None,
     }
     await db.coupons.insert_one(dict(coupon))
+    if payload.winner_email:
+        asyncio.create_task(_notify_winner_email(payload.winner_email.strip(), dict(coupon)))
     return serialize_coupon(coupon)
 
 
@@ -277,6 +321,10 @@ async def redeem_coupon(payload: RedeemRequest):
     coupon = await db.coupons.find_one({"code": code}, {"_id": 0})
     if not coupon:
         raise HTTPException(status_code=404, detail="Codice coupon non valido")
+    return await _do_redeem(coupon, code)
+
+
+async def _do_redeem(coupon: dict, code: str) -> dict:
     status = compute_status(coupon)
     if status == "riscattato":
         raise HTTPException(status_code=409, detail=f"Coupon gia usato il {coupon.get('redeemed_at')}")
@@ -301,7 +349,6 @@ async def redeem_coupon(payload: RedeemRequest):
     }
     await db.notifications.insert_one(dict(notif))
 
-    # email notification (best effort, non-blocking — never delays redemption)
     settings = await db.settings.find_one({"_id": "app"})
     admin_email = (settings or {}).get("notification_email") or DEFAULT_ADMIN_EMAIL
     email_queued = False
@@ -321,6 +368,36 @@ async def _notify_redeem_email(admin_email: str, coupon: dict) -> None:
         )
     except Exception as e:
         logger.error(f"Email notify failed: {e}")
+
+
+def _winner_email_html(coupon: dict) -> str:
+    link = f"{APP_BASE_URL}/?coupon={coupon['code']}"
+    return (
+        '<table role="presentation" width="100%" style="background:#0C0D0E;padding:24px">'
+        '<tr><td style="font-family:Arial,sans-serif;color:#F8FAFC;max-width:520px;margin:auto">'
+        '<h2 style="color:#F59E0B;margin:0 0 12px">Hai vinto la Sfida dei Locali! \U0001F3C6</h2>'
+        f'<p>Complimenti {escape(coupon["winner_name"])}, hai vinto '
+        f'<strong>{escape(coupon["premio"])}</strong> presso <strong>{escape(coupon["locale"])}</strong>.</p>'
+        f'<p>Il tuo codice coupon e <strong>{escape(coupon["code"])}</strong>. '
+        f'Scade il <strong>{escape(coupon["expires_at"])}</strong>.</p>'
+        f'<p style="margin:20px 0"><a href="{link}" style="display:inline-block;background:#F59E0B;'
+        'color:#000;padding:12px 22px;border-radius:10px;text-decoration:none;font-weight:bold">'
+        'Apri la tua tessera con QR e countdown</a></p>'
+        '<p style="font-size:12px;color:#64748B">Mostra il QR code alla cassa del locale entro la scadenza. '
+        'Inviato da La Sfida dei Locali. Non chiediamo mai password o dati della carta via email.</p>'
+        '</td></tr></table>'
+    )
+
+
+async def _notify_winner_email(to: str, coupon: dict) -> None:
+    try:
+        await send_email(
+            to=to,
+            subject=f"Hai vinto: {coupon['premio']} - {coupon['locale']}",
+            html=_winner_email_html(coupon),
+        )
+    except Exception as e:
+        logger.error(f"Winner email failed: {e}")
 
 
 @api_router.get("/notifications")
@@ -366,6 +443,84 @@ async def stats():
     total = len(coupons)
     conversion = round((riscattati / total) * 100) if total else 0
     return {"totale": total, "attivi": attivi, "riscattati": riscattati, "scaduti": scaduti, "conversione": conversion}
+
+
+# ---------------------------------------------------------------------------
+# Auth & Negozianti ---------------------------------------------------------
+# ---------------------------------------------------------------------------
+class NegozianteCreate(BaseModel):
+    name: str
+    email: str
+    password: str
+    locale: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@api_router.get("/negozianti")
+async def list_negozianti():
+    return await db.negozianti.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(1000)
+
+
+@api_router.post("/negozianti")
+async def create_negoziante(payload: NegozianteCreate):
+    email = payload.email.strip().lower()
+    if await db.negozianti.find_one({"email": email}):
+        raise HTTPException(status_code=409, detail="Email gia registrata")
+    neg = {
+        "id": str(uuid.uuid4()),
+        "name": payload.name.strip(),
+        "email": email,
+        "password_hash": hash_password(payload.password),
+        "locale": payload.locale.strip(),
+        "created_at": now_iso(),
+    }
+    await db.negozianti.insert_one(dict(neg))
+    return {k: v for k, v in neg.items() if k != "password_hash"}
+
+
+@api_router.delete("/negozianti/{neg_id}")
+async def delete_negoziante(neg_id: str):
+    await db.negozianti.delete_one({"id": neg_id})
+    return {"ok": True}
+
+
+@api_router.post("/auth/login")
+async def login(payload: LoginRequest):
+    email = payload.email.strip().lower()
+    neg = await db.negozianti.find_one({"email": email})
+    if not neg or not verify_password(payload.password, neg["password_hash"]):
+        raise HTTPException(status_code=401, detail="Email o password non validi")
+    token = create_access_token(neg["id"], email)
+    return {
+        "token": token,
+        "negoziante": {"id": neg["id"], "name": neg["name"], "email": neg["email"], "locale": neg["locale"]},
+    }
+
+
+@api_router.get("/auth/me")
+async def auth_me(neg: dict = Depends(get_current_negoziante)):
+    return neg
+
+
+@api_router.get("/negoziante/coupons")
+async def negoziante_coupons(neg: dict = Depends(get_current_negoziante)):
+    items = await db.coupons.find({"locale": neg["locale"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return [serialize_coupon(c) for c in items]
+
+
+@api_router.post("/negoziante/redeem")
+async def negoziante_redeem(payload: RedeemRequest, neg: dict = Depends(get_current_negoziante)):
+    code = payload.code.strip().upper()
+    coupon = await db.coupons.find_one({"code": code}, {"_id": 0})
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Codice coupon non valido")
+    if coupon["locale"] != neg["locale"]:
+        raise HTTPException(status_code=403, detail=f"Coupon di un altro locale: {coupon['locale']}")
+    return await _do_redeem(coupon, code)
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +574,29 @@ async def seed_db():
         }
         await db.coupons.insert_one(coupon)
     await db.settings.update_one({"_id": "app"}, {"$set": {"notification_email": DEFAULT_ADMIN_EMAIL}}, upsert=True)
+    seed_negozianti = [
+        {"name": "Marco (Navigli)", "email": "navigli@sfida.it", "locale": "Botanical Bar Navigli"},
+        {"name": "Anna (Sole)", "email": "sole@sfida.it", "locale": "Osteria del Sole"},
+        {"name": "Gennaro (Michele)", "email": "michele@sfida.it", "locale": "Pizzeria Da Michele"},
+    ]
+    for n in seed_negozianti:
+        await db.negozianti.insert_one({
+            "id": str(uuid.uuid4()),
+            "name": n["name"],
+            "email": n["email"],
+            "password_hash": hash_password("negoziante123"),
+            "locale": n["locale"],
+            "created_at": now_iso(),
+        })
     logger.info("Seed complete.")
+
+
+@app.on_event("startup")
+async def ensure_indexes():
+    try:
+        await db.negozianti.create_index("email", unique=True)
+    except Exception as e:
+        logger.error(f"Index creation failed: {e}")
 
 
 app.include_router(api_router)
