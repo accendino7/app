@@ -2,12 +2,13 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import confetti from "canvas-confetti";
 import { Html5Qrcode } from "html5-qrcode";
-import { Flame, Camera, CameraOff, CheckCircle2, XCircle, MapPin, Gift, LogOut, Store, Lock } from "lucide-react";
+import { Flame, Camera, CameraOff, CheckCircle2, XCircle, MapPin, Gift, LogOut, Store, Lock, Send, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
-import { negozianteRedeem, getMyCoupons } from "@/api";
+import { negozianteRedeem, getMyCoupons, getSfide, negozianteCreateCoupon } from "@/api";
 
 function LoginForm() {
   const { signIn } = useAuth();
@@ -76,6 +77,9 @@ function ScannerTerminal({ refreshNotifications }) {
   const [result, setResult] = useState(null);
   const [myCoupons, setMyCoupons] = useState([]);
   const [scanning, setScanning] = useState(false);
+  const [sfide, setSfide] = useState([]);
+  const [reqForm, setReqForm] = useState({ sfida_id: "", winner_name: "", winner_email: "" });
+  const [reqLoading, setReqLoading] = useState(false);
   const scannerRef = useRef(null);
 
   const loadCoupons = useCallback(async () => {
@@ -89,6 +93,28 @@ function ScannerTerminal({ refreshNotifications }) {
   useEffect(() => {
     loadCoupons();
   }, [loadCoupons]);
+
+  useEffect(() => {
+    getSfide().then((list) => setSfide(list.filter((s) => s.locale === user.locale))).catch(() => {});
+  }, [user.locale]);
+
+  const submitRequest = async () => {
+    if (!reqForm.sfida_id || !reqForm.winner_name) {
+      toast.error("Seleziona la sfida e inserisci il vincitore");
+      return;
+    }
+    setReqLoading(true);
+    try {
+      const created = await negozianteCreateCoupon(reqForm);
+      toast.success(`Richiesta inviata: ${created.code} · in attesa di approvazione`);
+      setReqForm({ sfida_id: "", winner_name: "", winner_email: "" });
+      loadCoupons();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Errore nell'invio della richiesta");
+    } finally {
+      setReqLoading(false);
+    }
+  };
 
   const fireConfetti = () => {
     confetti({ particleCount: 120, spread: 75, origin: { y: 0.6 }, colors: ["#F59E0B", "#EA580C", "#10B981"] });
@@ -236,6 +262,45 @@ function ScannerTerminal({ refreshNotifications }) {
         </div>
       )}
 
+      <div className="fade-up rounded-3xl bg-[#141619] border border-white/10 p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Trophy className="w-5 h-5 text-[#F59E0B]" />
+          <h3 className="font-display text-lg font-bold">Proponi un coupon</h3>
+        </div>
+        <p className="text-xs text-[#64748B] -mt-2">Verrà inviato all'admin per l'approvazione finale.</p>
+        <div>
+          <Label className="text-xs text-[#94A3B8] mb-1.5 block">Sfida del tuo locale</Label>
+          <Select value={reqForm.sfida_id} onValueChange={(v) => setReqForm({ ...reqForm, sfida_id: v })}>
+            <SelectTrigger data-testid="req-sfida-select" className="bg-black/40 border-white/10">
+              <SelectValue placeholder={sfide.length ? "Seleziona sfida" : "Nessuna sfida per il tuo locale"} />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1B1E22] border-white/10 text-white">
+              {sfide.map((s) => (
+                <SelectItem key={s.id} value={s.id}>{s.titolo} · {s.premio} ({s.expiry_hours}h)</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div>
+            <Label className="text-xs text-[#94A3B8] mb-1.5 block">Nome vincitore</Label>
+            <Input data-testid="req-winner-name-input" value={reqForm.winner_name}
+              onChange={(e) => setReqForm({ ...reqForm, winner_name: e.target.value })}
+              placeholder="Es. Marco Rossi" className="bg-black/40 border-white/10" />
+          </div>
+          <div>
+            <Label className="text-xs text-[#94A3B8] mb-1.5 block">Email vincitore (opz.)</Label>
+            <Input data-testid="req-winner-email-input" value={reqForm.winner_email}
+              onChange={(e) => setReqForm({ ...reqForm, winner_email: e.target.value })}
+              placeholder="vincitore@email.it" className="bg-black/40 border-white/10" />
+          </div>
+        </div>
+        <Button data-testid="submit-request-btn" onClick={submitRequest} disabled={reqLoading || !sfide.length}
+          className="w-full h-12 font-bold bg-gradient-to-r from-[#F59E0B] to-[#EA580C] text-black hover:opacity-90 disabled:opacity-50">
+          <Send className="w-4 h-4 mr-2" /> {reqLoading ? "Invio..." : "Invia richiesta"}
+        </Button>
+      </div>
+
       <div className="fade-up">
         <h3 className="text-sm font-semibold text-[#94A3B8] mb-2">Coupon del tuo locale ({myCoupons.length})</h3>
         <div className="space-y-2">
@@ -249,8 +314,9 @@ function ScannerTerminal({ refreshNotifications }) {
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
                 c.status === "attivo" ? "text-[#F59E0B] bg-[#F59E0B]/10"
                   : c.status === "riscattato" ? "text-[#10B981] bg-[#10B981]/10"
+                  : c.status === "in_attesa" ? "text-[#8B5CF6] bg-[#8B5CF6]/10"
                   : "text-[#EF4444] bg-[#EF4444]/10"
-              }`}>{c.status.toUpperCase()}</span>
+              }`}>{c.status.replace("_", " ").toUpperCase()}</span>
             </div>
           ))}
         </div>

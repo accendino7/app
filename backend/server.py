@@ -280,6 +280,11 @@ class SettingsUpdate(BaseModel):
 
 
 def compute_status(coupon: dict) -> str:
+    appr = coupon.get("approval_status", "approved")
+    if appr == "pending":
+        return "in_attesa"
+    if appr == "rejected":
+        return "rifiutato"
     if coupon.get("redeemed_at"):
         return "riscattato"
     try:
@@ -366,6 +371,7 @@ async def create_coupon(payload: CouponCreate, _admin: dict = Depends(get_curren
         "created_at": created.isoformat(),
         "expires_at": expires.isoformat(),
         "redeemed_at": None,
+        "approval_status": "approved",
     }
     await db.coupons.insert_one(dict(coupon))
     if payload.winner_email:
@@ -388,6 +394,10 @@ async def redeem_coupon(payload: RedeemRequest):
 
 async def _do_redeem(coupon: dict, code: str) -> dict:
     status = compute_status(coupon)
+    if status == "in_attesa":
+        raise HTTPException(status_code=409, detail="Coupon in attesa di approvazione")
+    if status == "rifiutato":
+        raise HTTPException(status_code=409, detail="Coupon rifiutato dall'admin")
     if status == "riscattato":
         raise HTTPException(status_code=409, detail=f"Coupon gia usato il {coupon.get('redeemed_at')}")
     if status == "scaduto":
@@ -589,6 +599,84 @@ async def negoziante_redeem(payload: RedeemRequest, neg: dict = Depends(get_curr
     if coupon["locale"] != neg["locale"]:
         raise HTTPException(status_code=403, detail=f"Coupon di un altro locale: {coupon['locale']}")
     return await _do_redeem(coupon, code)
+
+
+class NegCouponCreate(BaseModel):
+    sfida_id: str
+    winner_name: str
+    winner_email: Optional[str] = None
+
+
+@api_router.post("/negoziante/coupons")
+async def negoziante_create_coupon(payload: NegCouponCreate, neg: dict = Depends(get_current_negoziante)):
+    sfida = await db.sfide.find_one({"id": payload.sfida_id}, {"_id": 0})
+    if not sfida:
+        raise HTTPException(status_code=404, detail="Sfida non trovata")
+    if sfida["locale"] != neg["locale"]:
+        raise HTTPException(status_code=403, detail="Puoi creare coupon solo per il tuo locale")
+    code = gen_code()
+    while await db.coupons.find_one({"code": code}):
+        code = gen_code()
+    created = datetime.now(timezone.utc)
+    expires = created + timedelta(hours=sfida["expiry_hours"])
+    coupon = {
+        "id": str(uuid.uuid4()),
+        "code": code,
+        "sfida_id": sfida["id"],
+        "sfida_titolo": sfida["titolo"],
+        "locale": sfida["locale"],
+        "premio": sfida["premio"],
+        "cover_image": sfida.get("cover_image"),
+        "winner_name": payload.winner_name,
+        "winner_email": payload.winner_email,
+        "expiry_hours": sfida["expiry_hours"],
+        "created_at": created.isoformat(),
+        "expires_at": expires.isoformat(),
+        "redeemed_at": None,
+        "approval_status": "pending",
+        "requested_by": neg["name"],
+        "requested_by_id": neg["id"],
+    }
+    await db.coupons.insert_one(dict(coupon))
+    asyncio.create_task(ws_manager.broadcast({"type": "request", "coupon": serialize_coupon(dict(coupon))}))
+    return serialize_coupon(coupon)
+
+
+@api_router.get("/coupon-requests")
+async def coupon_requests(_admin: dict = Depends(get_current_admin)):
+    items = await db.coupons.find({"approval_status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return [serialize_coupon(c) for c in items]
+
+
+@api_router.post("/coupons/{coupon_id}/approve")
+async def approve_coupon(coupon_id: str, _admin: dict = Depends(get_current_admin)):
+    coupon = await db.coupons.find_one({"id": coupon_id}, {"_id": 0})
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Coupon non trovato")
+    if coupon.get("approval_status") != "pending":
+        raise HTTPException(status_code=409, detail="Richiesta gia gestita")
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(hours=coupon.get("expiry_hours", 96))
+    await db.coupons.update_one(
+        {"id": coupon_id},
+        {"$set": {"approval_status": "approved", "approved_at": now.isoformat(), "expires_at": expires.isoformat()}},
+    )
+    coupon.update({"approval_status": "approved", "approved_at": now.isoformat(), "expires_at": expires.isoformat()})
+    if coupon.get("winner_email"):
+        asyncio.create_task(_notify_winner_email(coupon["winner_email"].strip(), dict(coupon)))
+    return serialize_coupon(coupon)
+
+
+@api_router.post("/coupons/{coupon_id}/reject")
+async def reject_coupon(coupon_id: str, _admin: dict = Depends(get_current_admin)):
+    coupon = await db.coupons.find_one({"id": coupon_id}, {"_id": 0})
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Coupon non trovato")
+    if coupon.get("approval_status") != "pending":
+        raise HTTPException(status_code=409, detail="Richiesta gia gestita")
+    await db.coupons.update_one({"id": coupon_id}, {"$set": {"approval_status": "rejected"}})
+    coupon["approval_status"] = "rejected"
+    return serialize_coupon(coupon)
 
 
 # ---------------------------------------------------------------------------

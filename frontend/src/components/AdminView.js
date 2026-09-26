@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import {
   Plus, Trophy, Zap, CheckCircle2, XCircle, TrendingUp, Mail, Save, Ticket,
-  Store, Trash2, History, Download,
+  Store, Trash2, History, Download, Inbox, Check, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   getSfide, createSfida, getCoupons, createCoupon, getStats, getSettings, updateSettings,
   getNegozianti, createNegoziante, deleteNegoziante,
+  getCouponRequests, approveCoupon, rejectCoupon,
 } from "@/api";
 import CouponTicket from "@/components/CouponTicket";
 
@@ -32,12 +33,13 @@ function Field({ label, children }) {
   );
 }
 
-export default function AdminView({ notifications, refreshNotifications }) {
+export default function AdminView({ notifications, refreshNotifications, wsTick }) {
   const [sfide, setSfide] = useState([]);
   const [coupons, setCoupons] = useState([]);
   const [stats, setStats] = useState({});
   const [settings, setSettings] = useState({ notification_email: "" });
   const [negozianti, setNegozianti] = useState([]);
+  const [requests, setRequests] = useState([]);
 
   const [sfidaForm, setSfidaForm] = useState({ titolo: "", locale: "", premio: "", expiry_hours: 96 });
   const [sfidaOpen, setSfidaOpen] = useState(false);
@@ -49,19 +51,35 @@ export default function AdminView({ notifications, refreshNotifications }) {
   const [filterSfida, setFilterSfida] = useState("all");
 
   const refresh = useCallback(async () => {
-    const [s, c, st, se, n] = await Promise.all([
-      getSfide(), getCoupons(), getStats(), getSettings(), getNegozianti(),
+    const [s, c, st, se, n, r] = await Promise.all([
+      getSfide(), getCoupons(), getStats(), getSettings(), getNegozianti(), getCouponRequests(),
     ]);
     setSfide(s);
     setCoupons(c);
     setStats(st);
     setSettings(se);
     setNegozianti(n);
+    setRequests(r);
   }, []);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (wsTick) getCouponRequests().then(setRequests).catch(() => {});
+  }, [wsTick]);
+
+  const doApprove = async (id) => {
+    await approveCoupon(id);
+    toast.success("Coupon approvato · countdown avviato");
+    refresh();
+  };
+  const doReject = async (id) => {
+    await rejectCoupon(id);
+    toast("Richiesta rifiutata");
+    refresh();
+  };
 
   const locali = [...new Set(sfide.map((s) => s.locale))];
 
@@ -158,11 +176,11 @@ export default function AdminView({ notifications, refreshNotifications }) {
             </DialogTrigger>
             <DialogContent className="bg-[#141619] border-white/10 text-white">
               <DialogHeader>
-                <DialogTitle className="font-display">Crea una nuova sfida</DialogTitle>
+                <DialogTitle className="font-display">Crea un nuovo coupon</DialogTitle>
                 <DialogDescription className="text-[#64748B]">Definisci locale, premio e durata del coupon.</DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-2">
-                <Field label="Titolo sfida">
+                <Field label="Titolo Coupon">
                   <Input data-testid="challenge-title-input" value={sfidaForm.titolo}
                     onChange={(e) => setSfidaForm({ ...sfidaForm, titolo: e.target.value })}
                     placeholder="Es. Aperitivo per Due" className="bg-black/40 border-white/10" />
@@ -186,7 +204,7 @@ export default function AdminView({ notifications, refreshNotifications }) {
               <DialogFooter>
                 <Button data-testid="submit-challenge-btn" onClick={submitSfida}
                   className="bg-gradient-to-r from-[#F59E0B] to-[#EA580C] text-black font-semibold hover:opacity-90">
-                  Crea Sfida
+                  Crea Coupon
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -274,6 +292,9 @@ export default function AdminView({ notifications, refreshNotifications }) {
           <TabsTrigger value="coupon" data-testid="tab-coupon" className="data-[state=active]:bg-[#F59E0B] data-[state=active]:text-black">
             <Ticket className="w-4 h-4 mr-1.5" /> Coupon
           </TabsTrigger>
+          <TabsTrigger value="richieste" data-testid="tab-richieste" className="data-[state=active]:bg-[#8B5CF6] data-[state=active]:text-white">
+            <Inbox className="w-4 h-4 mr-1.5" /> Richieste{requests.length ? ` (${requests.length})` : ""}
+          </TabsTrigger>
           <TabsTrigger value="negozianti" data-testid="tab-negozianti" className="data-[state=active]:bg-[#F59E0B] data-[state=active]:text-black">
             <Store className="w-4 h-4 mr-1.5" /> Negozianti
           </TabsTrigger>
@@ -295,11 +316,42 @@ export default function AdminView({ notifications, refreshNotifications }) {
           )}
         </TabsContent>
 
+        <TabsContent value="richieste" className="mt-6 space-y-3">
+          <h2 className="font-display text-xl font-bold mb-1">Richieste coupon dai negozianti ({requests.length})</h2>
+          <p className="text-[#64748B] text-sm mb-4">Approva o rifiuta i coupon proposti dai negozianti. All'approvazione parte il countdown.</p>
+          {requests.length === 0 ? (
+            <p className="text-[#64748B] text-sm">Nessuna richiesta in attesa.</p>
+          ) : (
+            <div className="space-y-3">
+              {requests.map((r) => (
+                <div key={r.id} data-testid="request-item" className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-[#141619] border border-[#8B5CF6]/30">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-[#F59E0B]">{r.code}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#8B5CF6]/15 text-[#8B5CF6] font-bold">IN ATTESA</span>
+                    </div>
+                    <p className="text-sm mt-1">{r.premio} · <span className="text-[#94A3B8]">{r.locale}</span></p>
+                    <p className="text-xs text-[#64748B] mt-0.5">Vincitore: {r.winner_name} · richiesto da {r.requested_by} · {r.expiry_hours}h</p>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <Button data-testid={`approve-${r.code}`} onClick={() => doApprove(r.id)} className="bg-[#10B981] text-black font-semibold hover:opacity-90">
+                      <Check className="w-4 h-4 mr-1" /> Approva
+                    </Button>
+                    <Button data-testid={`reject-${r.code}`} onClick={() => doReject(r.id)} variant="outline" className="border-[#EF4444]/40 text-[#EF4444] bg-transparent hover:bg-[#EF4444]/10">
+                      <X className="w-4 h-4 mr-1" /> Rifiuta
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
         <TabsContent value="negozianti" className="mt-6 space-y-6">
           <div className="p-5 rounded-2xl bg-[#141619] border border-white/10">
             <h3 className="font-display text-lg font-bold mb-4">Crea account negoziante</h3>
             <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Nome">
+              <Field label="Nome Attività">
                 <Input data-testid="neg-name-input" value={negForm.name}
                   onChange={(e) => setNegForm({ ...negForm, name: e.target.value })}
                   placeholder="Es. Marco" className="bg-black/40 border-white/10" />

@@ -20,6 +20,7 @@ function AppInner() {
 
   const [role, setRole] = useState(couponParam ? "cliente" : "admin");
   const [notifications, setNotifications] = useState([]);
+  const [wsTick, setWsTick] = useState(0);
   const seenCountRef = useRef(null);
 
   const refreshNotifications = useCallback(async () => {
@@ -59,7 +60,18 @@ function AppInner() {
     try {
       const wsUrl = `${BACKEND_URL.replace(/^http/, "ws")}/api/ws/notifications?token=${getToken()}`;
       ws = new WebSocket(wsUrl);
-      ws.onmessage = () => refreshNotifications();
+      ws.onmessage = (ev) => {
+        setWsTick((t) => t + 1);
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === "request") {
+            playBeep();
+            const c = msg.coupon || {};
+            toast.info("Nuova richiesta coupon", { description: `${c.locale} · ${c.winner_name}` });
+          }
+        } catch (e) { /* ignore */ }
+        refreshNotifications();
+      };
     } catch (e) {
       /* ws unavailable, polling still covers it */
     }
@@ -83,7 +95,7 @@ function AppInner() {
       <main className="relative z-[2] max-w-6xl mx-auto px-4 sm:px-6 pb-24 pt-6">
         {role === "admin" &&
           (isAdmin ? (
-            <AdminView notifications={notifications} refreshNotifications={refreshNotifications} />
+            <AdminView notifications={notifications} refreshNotifications={refreshNotifications} wsTick={wsTick} />
           ) : (
             <AdminLogin />
           ))}

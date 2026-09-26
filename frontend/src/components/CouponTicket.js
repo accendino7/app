@@ -6,6 +6,8 @@ const STATUS_STYLES = {
   attivo: { label: "ATTIVO", cls: "bg-[#F59E0B]/15 text-[#F59E0B] border-[#F59E0B]/40" },
   riscattato: { label: "RISCATTATO", cls: "bg-[#10B981]/15 text-[#10B981] border-[#10B981]/40" },
   scaduto: { label: "SCADUTO", cls: "bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/40" },
+  in_attesa: { label: "IN ATTESA", cls: "bg-[#8B5CF6]/15 text-[#8B5CF6] border-[#8B5CF6]/40" },
+  rifiutato: { label: "RIFIUTATO", cls: "bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/40" },
 };
 
 function CountdownBlock({ value, unit }) {
@@ -59,7 +61,10 @@ export default function CouponTicket({ coupon, showQR = true }) {
       <div className="p-5 sm:p-6">
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-[#64748B] mb-3">
           <Clock className="w-3.5 h-3.5" />
-          {isActive ? "Scade tra" : status === "scaduto" || expired ? "Tempo scaduto" : "Coupon riscattato"}
+          {isActive ? "Scade tra"
+            : status === "in_attesa" ? "In attesa di approvazione"
+            : status === "rifiutato" ? "Richiesta rifiutata"
+            : status === "scaduto" || expired ? "Tempo scaduto" : "Coupon riscattato"}
         </div>
 
         {isActive && !expired ? (
@@ -77,7 +82,10 @@ export default function CouponTicket({ coupon, showQR = true }) {
           </div>
         ) : (
           <div className={`px-4 py-3 rounded-2xl border text-center font-semibold ${st.cls}`}>
-            {status === "riscattato" ? "Premio ritirato con successo" : "Questo coupon non e piu valido"}
+            {status === "riscattato" ? "Premio ritirato con successo"
+              : status === "in_attesa" ? "In attesa dell'approvazione dell'admin"
+              : status === "rifiutato" ? "Richiesta non approvata"
+              : "Questo coupon non e piu valido"}
           </div>
         )}
 
