@@ -26,7 +26,7 @@ export default function ClienteView({ initialCode }) {
       <div className="fade-up text-center">
         <p className="text-[11px] uppercase tracking-[0.25em] text-[#F59E0B] font-semibold">La Tua Tessera</p>
         <h1 className="font-display text-3xl sm:text-4xl font-black tracking-tight mt-1">Coupon Vincitore</h1>
-        <p className="text-[#94A3B8] mt-1 text-sm">Mostra il QR code al locale prima della scadenza.</p>
+        <p className="text-[#94A3B8] mt-1 text-sm">Mostra il QR code prima della scadenza</p>
       </div>
 
       {coupons.length > 1 && (

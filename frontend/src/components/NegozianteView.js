@@ -39,7 +39,7 @@ function LoginForm() {
           <Store className="w-7 h-7 text-black" />
         </div>
         <h1 className="font-display text-3xl font-black tracking-tight">Accesso Negoziante</h1>
-        <p className="text-[#94A3B8] mt-1 text-sm">Entra per sparare i coupon del tuo locale.</p>
+        <p className="text-[#94A3B8] mt-1 text-sm">Entra per gestire i tuoi coupon</p>
       </div>
       <form onSubmit={submit} className="fade-up rounded-3xl bg-[#141619] border border-white/10 p-6 space-y-4">
         <div>
