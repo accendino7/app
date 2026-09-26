@@ -67,18 +67,26 @@ export default function AdminView({ notifications, refreshNotifications, wsTick 
   }, [refresh]);
 
   useEffect(() => {
-    if (wsTick) getCouponRequests().then(setRequests).catch(() => {});
+    if (wsTick) refresh();
   }, [wsTick]);
 
   const doApprove = async (id) => {
-    await approveCoupon(id);
-    toast.success("Coupon approvato · countdown avviato");
-    refresh();
+    try {
+      await approveCoupon(id);
+      toast.success("Coupon approvato · countdown avviato");
+      refresh();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Impossibile approvare");
+    }
   };
   const doReject = async (id) => {
-    await rejectCoupon(id);
-    toast("Richiesta rifiutata");
-    refresh();
+    try {
+      await rejectCoupon(id);
+      toast("Richiesta rifiutata");
+      refresh();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Impossibile rifiutare");
+    }
   };
 
   const locali = [...new Set(sfide.map((s) => s.locale))];

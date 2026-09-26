@@ -1,0 +1,22 @@
+{
+  "summary": "Iteration 4 (negoziante-proposed coupons + admin approval workflow). Backend: 33/33 pytest tests passed on public URL (5 new iter4 tests covering pending creation, 409 on pending/rejected redeem, /coupon-requests admin listing, approve->attivo+redeemable, reject->rifiutato, cross-locale 403, admin/negoziante token auth 401/403). Frontend (Playwright on public URL): (1) Negoziante navigli@sfida.it/negoziante123 logs in, sees 'Proponi un coupon' with select of Botanical Bar Navigli sfide, name+optional email inputs; submitting creates pending coupon with toast 'Richiesta inviata: SFIDA-XXXXX · in attesa di approvazione' and 'IN ATTESA' viola badge in list. (2) Attempting redeem of pending coupon via scanner-code-input + shoot-coupon-btn shows redeem-result with 'Coupon in attesa di approvazione' (HTTP 409 in network). (3) Admin login, tab-richieste shows count badge '(1)'; opening tab shows request-item with code/premio/locale/vincitore/richiedente + approve-<CODE>/reject-<CODE> buttons. (4) Approve moves coupon to Coupon tab as 'attivo' with countdown (screenshot confirms 23h 59m visible). (5) Real-time WebSocket: while admin on dashboard, a new /api/negoziante/coupons POST from sole@sfida.it triggered a toast 'Nuova richiesta coupon · Osteria del Sole · TESTUI_WS21791' and tab-richieste badge went (1)->(2) within ~600ms — WS type=request handled correctly, no manual refresh needed. (6) CouponTicket renders 'IN ATTESA DI APPROVAZIONE' (viola) and 'RICHIESTA RIFIUTATA' (rossa) states with no countdown. All security assertions verified in backend suite (401 unauth, 403 wrong role, 403 cross-locale, 409 already-decided). No stray toast on initial admin load. No console errors other than the expected 409 XHR.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py continues to grow (783+ lines). Now that pending/approve/reject endpoints have been added, splitting into modules (auth, email, routes_admin, routes_negoziante, routes_public, websocket) becomes more important for maintainability.",
+    "AdminView.doApprove / doReject don't catch errors — a 409 (e.g. clicking Approve twice) will bubble as an unhandled promise rejection with no user feedback; wrap in try/catch and toast.error(e.response?.data?.detail).",
+    "NegozianteView filters sfide client-side by user.locale (getSfide().filter(...)). Backend already enforces the locale check; consider exposing a scoped GET /api/negoziante/sfide to avoid over-fetching all sfide to the client.",
+    "AdminView refresh() calls 6 endpoints in parallel via Promise.all and any single failure rejects the whole refresh (no partial UI). Consider Promise.allSettled + granular error surfaces so a transient 500 on /stats doesn't wipe the tab data.",
+    "The wsTick effect only re-fetches coupon-requests; if the WS delivers a 'redeem' event the coupons list is not refreshed until the 15s polling. Consider triggering refresh() on WS 'redeem' events as well.",
+    "Duplicate STATUS_STYLES/badge logic exists in CouponTicket and inline in NegozianteView coupon list — extract a shared helper to avoid drift."
+  ],
+  "updated_files": ["/app/test_reports/iteration_4.json"],
+  "success_rate": {"backend": "100% (33/33)", "frontend": "100% (all 6 flows)"},
+  "test_credentials": "admin eugeniumnapoli@gmail.com/SfidaAdmin2026 ; negoziante navigli@sfida.it/negoziante123 (Botanical Bar Navigli), sole@sfida.it (Osteria del Sole)",
+  "seed_data_creation": "Created a couple of TEST_it4 sfide + several TESTUI_/TEST_ pending/approved/rejected coupons on Botanical Bar Navigli and Osteria del Sole during E2E run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter4 endpoints stable: POST /api/negoziante/coupons (neg-only), GET /api/coupon-requests (admin), POST /api/coupons/{id}/approve|reject (admin). approval_status ∈ {pending, approved, rejected}; UI status derived: in_attesa / rifiutato / attivo / riscattato / scaduto. WS payload type=request carries {locale, winner_name} and is toast+beep on admin dashboard, also increments wsTick which re-fetches getCouponRequests(). Single 'sfida_token' in localStorage; call header-logout-btn (or logout-btn inside negoziante view) between identities."
+}
