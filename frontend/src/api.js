@@ -39,6 +39,8 @@ export const deleteNegoziante = (id) => client.delete(`/negozianti/${id}`).then(
 export const getMyCoupons = () => client.get("/negoziante/coupons").then((r) => r.data);
 export const negozianteRedeem = (code) => client.post("/negoziante/redeem", { code }).then((r) => r.data);
 export const negozianteCreateCoupon = (data) => client.post("/negoziante/coupons", data).then((r) => r.data);
+export const getNegNotifications = () => client.get("/negoziante/notifications").then((r) => r.data);
+export const markNegNotificationsRead = () => client.post("/negoziante/notifications/read").then((r) => r.data);
 export const getCouponRequests = () => client.get("/coupon-requests").then((r) => r.data);
 export const approveCoupon = (id) => client.post(`/coupons/${id}/approve`).then((r) => r.data);
-export const rejectCoupon = (id) => client.post(`/coupons/${id}/reject`).then((r) => r.data);
+export const rejectCoupon = (id, reason) => client.post(`/coupons/${id}/reject`, { reason }).then((r) => r.data);

@@ -119,8 +119,25 @@ export default function AdminView({ notifications, refreshNotifications, wsTick 
   };
 
   const saveEmail = async () => {
-    await updateSettings({ notification_email: settings.notification_email });
-    toast.success("Email notifiche aggiornata");
+    await updateSettings({
+      notification_email: settings.notification_email,
+      daily_request_limit: settings.daily_request_limit,
+    });
+    toast.success("Impostazioni salvate");
+  };
+
+  const [rejectTarget, setRejectTarget] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const confirmReject = async () => {
+    try {
+      await rejectCoupon(rejectTarget.id, rejectReason);
+      toast("Richiesta rifiutata");
+      setRejectTarget(null);
+      setRejectReason("");
+      refresh();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Impossibile rifiutare");
+    }
   };
 
   const submitNeg = async () => {
@@ -290,6 +307,15 @@ export default function AdminView({ notifications, refreshNotifications, wsTick 
             onChange={(e) => setSettings({ ...settings, notification_email: e.target.value })}
             className="bg-black/40 border-white/10" />
         </div>
+        <div className="sm:w-52">
+          <Label className="text-xs text-[#94A3B8] flex items-center gap-1.5 mb-1.5">
+            <Inbox className="w-3.5 h-3.5" /> Limite richieste/giorno per negoziante
+          </Label>
+          <Input data-testid="daily-limit-input" type="number" min={0}
+            value={settings.daily_request_limit ?? 5}
+            onChange={(e) => setSettings({ ...settings, daily_request_limit: Math.max(0, parseInt(e.target.value || "0", 10)) })}
+            className="bg-black/40 border-white/10" />
+        </div>
         <Button data-testid="save-email-btn" onClick={saveEmail} variant="outline" className="border-white/15 bg-transparent hover:bg-white/5 text-white">
           <Save className="w-4 h-4 mr-1.5" /> Salva
         </Button>
@@ -345,7 +371,7 @@ export default function AdminView({ notifications, refreshNotifications, wsTick 
                     <Button data-testid={`approve-${r.code}`} onClick={() => doApprove(r.id)} className="bg-[#10B981] text-black font-semibold hover:opacity-90">
                       <Check className="w-4 h-4 mr-1" /> Approva
                     </Button>
-                    <Button data-testid={`reject-${r.code}`} onClick={() => doReject(r.id)} variant="outline" className="border-[#EF4444]/40 text-[#EF4444] bg-transparent hover:bg-[#EF4444]/10">
+                    <Button data-testid={`reject-${r.code}`} onClick={() => setRejectTarget({ id: r.id, code: r.code })} variant="outline" className="border-[#EF4444]/40 text-[#EF4444] bg-transparent hover:bg-[#EF4444]/10">
                       <X className="w-4 h-4 mr-1" /> Rifiuta
                     </Button>
                   </div>
@@ -464,6 +490,26 @@ export default function AdminView({ notifications, refreshNotifications, wsTick 
           </div>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!rejectTarget} onOpenChange={(o) => { if (!o) { setRejectTarget(null); setRejectReason(""); } }}>
+        <DialogContent className="bg-[#1B1E22] border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="font-display">Rifiuta richiesta {rejectTarget?.code}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label className="text-xs text-[#94A3B8]">Motivazione (opzionale, mostrata al negoziante)</Label>
+            <Input data-testid="reject-reason-input" value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Es. Premio non più disponibile" className="bg-black/40 border-white/10" />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => { setRejectTarget(null); setRejectReason(""); }}>Annulla</Button>
+              <Button data-testid="confirm-reject-btn" onClick={confirmReject} className="bg-[#EF4444] text-white hover:opacity-90">
+                Rifiuta richiesta
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

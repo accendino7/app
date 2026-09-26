@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
-import { negozianteRedeem, getMyCoupons, getSfide, negozianteCreateCoupon } from "@/api";
+import { negozianteRedeem, getMyCoupons, getSfide, negozianteCreateCoupon, getNegNotifications, markNegNotificationsRead } from "@/api";
 
 function LoginForm() {
   const { signIn } = useAuth();
@@ -79,7 +79,10 @@ function ScannerTerminal({ refreshNotifications }) {
   const [scanning, setScanning] = useState(false);
   const [sfide, setSfide] = useState([]);
   const [reqForm, setReqForm] = useState({ sfida_id: "", winner_name: "", winner_email: "" });
+  const [quantity, setQuantity] = useState(1);
   const [reqLoading, setReqLoading] = useState(false);
+  const [updates, setUpdates] = useState([]);
+  const seenUpdatesRef = useRef(null);
   const scannerRef = useRef(null);
 
   const loadCoupons = useCallback(async () => {
@@ -98,16 +101,54 @@ function ScannerTerminal({ refreshNotifications }) {
     getSfide().then((list) => setSfide(list.filter((s) => s.locale === user.locale))).catch(() => {});
   }, [user.locale]);
 
+  const loadUpdates = useCallback(async () => {
+    try {
+      const data = await getNegNotifications();
+      setUpdates(data);
+      if (seenUpdatesRef.current === null) {
+        seenUpdatesRef.current = new Set(data.map((u) => u.id));
+      } else {
+        const fresh = data.filter((u) => !seenUpdatesRef.current.has(u.id));
+        fresh.forEach((u) => {
+          seenUpdatesRef.current.add(u.id);
+          if (u.type === "approved") {
+            toast.success(`Coupon ${u.code} approvato!`, { description: u.premio });
+          } else {
+            toast.error(`Coupon ${u.code} rifiutato`, { description: u.reason || "Nessuna motivazione" });
+          }
+        });
+        if (fresh.length) {
+          loadCoupons();
+          markNegNotificationsRead().catch(() => {});
+        }
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }, [loadCoupons]);
+
+  useEffect(() => {
+    loadUpdates();
+    const t = setInterval(loadUpdates, 6000);
+    return () => clearInterval(t);
+  }, [loadUpdates]);
+
   const submitRequest = async () => {
-    if (!reqForm.sfida_id || !reqForm.winner_name) {
-      toast.error("Seleziona la sfida e inserisci il vincitore");
+    if (!reqForm.sfida_id) {
+      toast.error("Seleziona la sfida");
       return;
     }
     setReqLoading(true);
     try {
-      const created = await negozianteCreateCoupon(reqForm);
-      toast.success(`Richiesta inviata: ${created.code} · in attesa di approvazione`);
+      const res = await negozianteCreateCoupon({ ...reqForm, quantity });
+      const n = res.count || 1;
+      toast.success(
+        n > 1
+          ? `${n} coupon inviati · in attesa di approvazione`
+          : `Richiesta inviata: ${res.created[0].code} · in attesa di approvazione`,
+      );
       setReqForm({ sfida_id: "", winner_name: "", winner_email: "" });
+      setQuantity(1);
       loadCoupons();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Errore nell'invio della richiesta");
@@ -262,6 +303,29 @@ function ScannerTerminal({ refreshNotifications }) {
         </div>
       )}
 
+      {updates.length > 0 && (
+        <div data-testid="neg-updates" className="fade-up rounded-3xl bg-[#141619] border border-white/10 p-6">
+          <h3 className="font-display text-lg font-bold mb-3">Aggiornamenti richieste</h3>
+          <div className="space-y-2 max-h-56 overflow-auto">
+            {updates.map((u) => (
+              <div key={u.id} data-testid="neg-update-item"
+                className={`p-3 rounded-xl border text-sm ${u.type === "approved" ? "bg-[#10B981]/10 border-[#10B981]/30" : "bg-[#EF4444]/10 border-[#EF4444]/30"}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-[#F59E0B]">{u.code}</span>
+                  <span className={`text-xs font-bold ${u.type === "approved" ? "text-[#10B981]" : "text-[#EF4444]"}`}>
+                    {u.type === "approved" ? "APPROVATO" : "RIFIUTATO"}
+                  </span>
+                </div>
+                <p className="text-[#94A3B8] mt-1">{u.premio}</p>
+                {u.type === "rejected" && u.reason && (
+                  <p className="text-xs text-[#EF4444] mt-1">Motivo: {u.reason}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="fade-up rounded-3xl bg-[#141619] border border-white/10 p-6 space-y-4">
         <div className="flex items-center gap-2">
           <Trophy className="w-5 h-5 text-[#F59E0B]" />
@@ -283,7 +347,7 @@ function ScannerTerminal({ refreshNotifications }) {
         </div>
         <div className="grid sm:grid-cols-2 gap-3">
           <div>
-            <Label className="text-xs text-[#94A3B8] mb-1.5 block">Nome vincitore</Label>
+            <Label className="text-xs text-[#94A3B8] mb-1.5 block">Nome vincitore (opz.)</Label>
             <Input data-testid="req-winner-name-input" value={reqForm.winner_name}
               onChange={(e) => setReqForm({ ...reqForm, winner_name: e.target.value })}
               placeholder="Es. Marco Rossi" className="bg-black/40 border-white/10" />
@@ -294,6 +358,12 @@ function ScannerTerminal({ refreshNotifications }) {
               onChange={(e) => setReqForm({ ...reqForm, winner_email: e.target.value })}
               placeholder="vincitore@email.it" className="bg-black/40 border-white/10" />
           </div>
+        </div>
+        <div>
+          <Label className="text-xs text-[#94A3B8] mb-1.5 block">Quantità (coupon uguali per lo stesso premio)</Label>
+          <Input data-testid="req-quantity-input" type="number" min={1} max={20} value={quantity}
+            onChange={(e) => setQuantity(Math.max(1, Math.min(20, parseInt(e.target.value || "1", 10))))}
+            className="bg-black/40 border-white/10 w-32" />
         </div>
         <Button data-testid="submit-request-btn" onClick={submitRequest} disabled={reqLoading || !sfide.length}
           className="w-full h-12 font-bold bg-gradient-to-r from-[#F59E0B] to-[#EA580C] text-black hover:opacity-90 disabled:opacity-50">

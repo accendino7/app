@@ -277,6 +277,11 @@ class CouponCreate(BaseModel):
 
 class SettingsUpdate(BaseModel):
     notification_email: str
+    daily_request_limit: Optional[int] = None
+
+
+class RejectRequest(BaseModel):
+    reason: Optional[str] = None
 
 
 def compute_status(coupon: dict) -> str:
@@ -497,16 +502,20 @@ async def mark_all_read(_admin: dict = Depends(get_current_admin)):
 async def get_settings(_admin: dict = Depends(get_current_admin)):
     settings = await db.settings.find_one({"_id": "app"}, {"_id": 0})
     if not settings:
-        settings = {"notification_email": DEFAULT_ADMIN_EMAIL}
+        settings = {"notification_email": DEFAULT_ADMIN_EMAIL, "daily_request_limit": 5}
+    settings.setdefault("daily_request_limit", 5)
     return settings
 
 
 @api_router.put("/settings")
 async def update_settings(payload: SettingsUpdate, _admin: dict = Depends(get_current_admin)):
-    await db.settings.update_one(
-        {"_id": "app"}, {"$set": {"notification_email": payload.notification_email}}, upsert=True
-    )
-    return {"notification_email": payload.notification_email}
+    update = {"notification_email": payload.notification_email}
+    if payload.daily_request_limit is not None:
+        update["daily_request_limit"] = max(0, int(payload.daily_request_limit))
+    await db.settings.update_one({"_id": "app"}, {"$set": update}, upsert=True)
+    s = await db.settings.find_one({"_id": "app"}, {"_id": 0})
+    s.setdefault("daily_request_limit", 5)
+    return s
 
 
 @api_router.get("/stats")
@@ -603,8 +612,9 @@ async def negoziante_redeem(payload: RedeemRequest, neg: dict = Depends(get_curr
 
 class NegCouponCreate(BaseModel):
     sfida_id: str
-    winner_name: str
+    winner_name: Optional[str] = None
     winner_email: Optional[str] = None
+    quantity: int = 1
 
 
 @api_router.post("/negoziante/coupons")
@@ -614,32 +624,52 @@ async def negoziante_create_coupon(payload: NegCouponCreate, neg: dict = Depends
         raise HTTPException(status_code=404, detail="Sfida non trovata")
     if sfida["locale"] != neg["locale"]:
         raise HTTPException(status_code=403, detail="Puoi creare coupon solo per il tuo locale")
-    code = gen_code()
-    while await db.coupons.find_one({"code": code}):
+    qty = max(1, min(int(payload.quantity or 1), 20))
+    settings = await db.settings.find_one({"_id": "app"})
+    limit = int((settings or {}).get("daily_request_limit", 5))
+    if limit > 0:
+        start_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        used_today = await db.coupons.count_documents({
+            "requested_by_id": neg["id"],
+            "created_at": {"$gte": start_day.isoformat()},
+        })
+        if used_today + qty > limit:
+            remaining = max(0, limit - used_today)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Limite giornaliero raggiunto ({limit}/giorno). Puoi proporne ancora {remaining} oggi.",
+            )
+    base_name = (payload.winner_name or "").strip() or "Da assegnare"
+    created_list = []
+    for i in range(qty):
         code = gen_code()
-    created = datetime.now(timezone.utc)
-    expires = created + timedelta(hours=sfida["expiry_hours"])
-    coupon = {
-        "id": str(uuid.uuid4()),
-        "code": code,
-        "sfida_id": sfida["id"],
-        "sfida_titolo": sfida["titolo"],
-        "locale": sfida["locale"],
-        "premio": sfida["premio"],
-        "cover_image": sfida.get("cover_image"),
-        "winner_name": payload.winner_name,
-        "winner_email": payload.winner_email,
-        "expiry_hours": sfida["expiry_hours"],
-        "created_at": created.isoformat(),
-        "expires_at": expires.isoformat(),
-        "redeemed_at": None,
-        "approval_status": "pending",
-        "requested_by": neg["name"],
-        "requested_by_id": neg["id"],
-    }
-    await db.coupons.insert_one(dict(coupon))
-    asyncio.create_task(ws_manager.broadcast({"type": "request", "coupon": serialize_coupon(dict(coupon))}))
-    return serialize_coupon(coupon)
+        while await db.coupons.find_one({"code": code}):
+            code = gen_code()
+        created = datetime.now(timezone.utc)
+        expires = created + timedelta(hours=sfida["expiry_hours"])
+        wname = f"{base_name} #{i + 1}" if qty > 1 else base_name
+        coupon = {
+            "id": str(uuid.uuid4()),
+            "code": code,
+            "sfida_id": sfida["id"],
+            "sfida_titolo": sfida["titolo"],
+            "locale": sfida["locale"],
+            "premio": sfida["premio"],
+            "cover_image": sfida.get("cover_image"),
+            "winner_name": wname,
+            "winner_email": payload.winner_email,
+            "expiry_hours": sfida["expiry_hours"],
+            "created_at": created.isoformat(),
+            "expires_at": expires.isoformat(),
+            "redeemed_at": None,
+            "approval_status": "pending",
+            "requested_by": neg["name"],
+            "requested_by_id": neg["id"],
+        }
+        await db.coupons.insert_one(dict(coupon))
+        created_list.append(serialize_coupon(dict(coupon)))
+    asyncio.create_task(ws_manager.broadcast({"type": "request", "coupon": created_list[0], "count": qty}))
+    return {"created": created_list, "count": qty}
 
 
 @api_router.get("/coupon-requests")
@@ -662,21 +692,52 @@ async def approve_coupon(coupon_id: str, _admin: dict = Depends(get_current_admi
         {"$set": {"approval_status": "approved", "approved_at": now.isoformat(), "expires_at": expires.isoformat()}},
     )
     coupon.update({"approval_status": "approved", "approved_at": now.isoformat(), "expires_at": expires.isoformat()})
+    if coupon.get("requested_by_id"):
+        await _add_neg_notification(coupon["requested_by_id"], coupon, "approved")
     if coupon.get("winner_email"):
         asyncio.create_task(_notify_winner_email(coupon["winner_email"].strip(), dict(coupon)))
     return serialize_coupon(coupon)
 
 
+async def _add_neg_notification(negoziante_id: str, coupon: dict, ntype: str, reason=None) -> None:
+    await db.neg_notifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "negoziante_id": negoziante_id,
+        "code": coupon.get("code"),
+        "premio": coupon.get("premio"),
+        "locale": coupon.get("locale"),
+        "type": ntype,
+        "reason": reason,
+        "created_at": now_iso(),
+        "read": False,
+    })
+
+
 @api_router.post("/coupons/{coupon_id}/reject")
-async def reject_coupon(coupon_id: str, _admin: dict = Depends(get_current_admin)):
+async def reject_coupon(coupon_id: str, payload: RejectRequest, _admin: dict = Depends(get_current_admin)):
     coupon = await db.coupons.find_one({"id": coupon_id}, {"_id": 0})
     if not coupon:
         raise HTTPException(status_code=404, detail="Coupon non trovato")
     if coupon.get("approval_status") != "pending":
         raise HTTPException(status_code=409, detail="Richiesta gia gestita")
-    await db.coupons.update_one({"id": coupon_id}, {"$set": {"approval_status": "rejected"}})
+    reason = (payload.reason or "").strip() or None
+    await db.coupons.update_one({"id": coupon_id}, {"$set": {"approval_status": "rejected", "reject_reason": reason}})
     coupon["approval_status"] = "rejected"
+    coupon["reject_reason"] = reason
+    if coupon.get("requested_by_id"):
+        await _add_neg_notification(coupon["requested_by_id"], coupon, "rejected", reason)
     return serialize_coupon(coupon)
+
+
+@api_router.get("/negoziante/notifications")
+async def negoziante_notifications(neg: dict = Depends(get_current_negoziante)):
+    return await db.neg_notifications.find({"negoziante_id": neg["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api_router.post("/negoziante/notifications/read")
+async def negoziante_notifications_read(neg: dict = Depends(get_current_negoziante)):
+    await db.neg_notifications.update_many({"negoziante_id": neg["id"], "read": False}, {"$set": {"read": True}})
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
